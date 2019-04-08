@@ -74,6 +74,7 @@ done
 perl $CLEAN -ratio 1.5 $tmp/dev.tok $src $tgt $tmp/dev.clean 1 175
 for l in $src $tgt; do
     perl $LC < $tmp/dev.clean.$l > $tmp/dev.$l
+    cp -r $tmp/dev.$l $prep/dev.$l
 done
 
 

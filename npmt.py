@@ -55,6 +55,12 @@ class NPMTModel(FairseqModel):
         parser.add_argument('--targetlang', type=str, metavar='STR', help='Target Language')
         parser.add_argument('--datadir', type=str, metavar='STR', help='Pre-processed data directory')
         parser.add_argument('--model', type=str, metavar='STR', help='Model to be used for train/dev/test')
+    
+    @classmethod
+    def build_model(cls, args, task):
+        encoder = None
+        decoder = None
+        return cls(encoder, decoder)
 
 
 @register_model_architecture('npmt', 'npmt_iwslt_de_en')
