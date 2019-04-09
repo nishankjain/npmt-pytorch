@@ -184,7 +184,7 @@ class LoadDataset(FairseqTask):
         parser.add_argument('data', nargs='+', help='path(s) to data directorie(s)')
         parser.add_argument('-s', '--source-lang', metavar='SRC', default='de',
                             help='source language')
-        parser.add_argument('-t', '--target-lang', metavar='TARGET',
+        parser.add_argument('-t', '--target-lang', metavar='TARGET', default='en',
                             help='target language')
         parser.add_argument('--lazy-load', action='store_true',
                             help='load the dataset lazily')
@@ -286,3 +286,13 @@ class LoadDataset(FairseqTask):
             max_source_positions=self.args.max_source_positions,
             max_target_positions=self.args.max_target_positions,
         )
+    
+    @property
+    def source_dictionary(self):
+        """Return the source :class:`~fairseq.data.Dictionary`."""
+        return self.src_dict
+
+    @property
+    def target_dictionary(self):
+        """Return the target :class:`~fairseq.data.Dictionary`."""
+        return self.tgt_dict
