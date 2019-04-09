@@ -1,13 +1,30 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from .SimpleLSTMDecoder import SimpleLSTMDecoder
+from .SimpleLSTMEncoder import SimpleLSTMEncoder
 
 from fairseq import options, utils
 from fairseq.modules import AdaptiveSoftmax
 from fairseq.models import (
-    FairseqEncoder, FairseqIncrementalDecoder, FairseqModel, register_model,
-    register_model_architecture,
+    FairseqEncoder,
+    FairseqIncrementalDecoder,
+    FairseqModel,
+    register_model,
+    register_model_architecture
 )
+import os, itertools
+from fairseq.tasks import FairseqTask, register_task
+from fairseq.data import (
+    ConcatDataset,
+    data_utils,
+    Dictionary,
+    IndexedCachedDataset,
+    IndexedDataset,
+    IndexedRawTextDataset,
+    LanguagePairDataset
+)
+
 
 @register_model('npmt')
 class NPMTModel(FairseqModel):
@@ -50,21 +67,65 @@ class NPMTModel(FairseqModel):
         parser.add_argument('--dropout', type=float, metavar='D', help='Overall dropout')
         parser.add_argument('--batchsize', type=int, metavar='N', help='Batch Size')
         parser.add_argument('--optim', type=str, metavar='STR', help='Optimizer')
-        parser.add_argument('--lr', type=float, metavar='D', help='Learning Rate')
+        # parser.add_argument('--lr', type=float, metavar='D', help='Learning Rate')
         parser.add_argument('--sourcelang', type=str, metavar='STR', help='Source Language')
         parser.add_argument('--targetlang', type=str, metavar='STR', help='Target Language')
         parser.add_argument('--datadir', type=str, metavar='STR', help='Pre-processed data directory')
         parser.add_argument('--model', type=str, metavar='STR', help='Model to be used for train/dev/test')
-    
+        parser.add_argument(
+            '--encoder-embed-dim', type=int, metavar='N',
+            help='dimensionality of the encoder embeddings',
+        )
+        parser.add_argument(
+            '--encoder-hidden-dim', type=int, metavar='N',
+            help='dimensionality of the encoder hidden state',
+        )
+        parser.add_argument(
+            '--encoder-dropout', type=float, default=0.1,
+            help='encoder dropout probability',
+        )
+        parser.add_argument(
+            '--decoder-embed-dim', type=int, metavar='N',
+            help='dimensionality of the decoder embeddings',
+        )
+        parser.add_argument(
+            '--decoder-hidden-dim', type=int, metavar='N',
+            help='dimensionality of the decoder hidden state',
+        )
+        parser.add_argument(
+            '--decoder-dropout', type=float, default=0.1,
+            help='decoder dropout probability',
+        )
+
     @classmethod
     def build_model(cls, args, task):
-        encoder = None
-        decoder = None
-        return cls(encoder, decoder)
+        # encoder = None
+        # decoder = None
+        # return cls(encoder, decoder)
+        encoder = SimpleLSTMEncoder(
+            args=args,
+            dictionary=task.source_dictionary,
+            embed_dim=args.encoder_embed_dim,
+            hidden_dim=args.encoder_hidden_dim,
+            dropout=args.encoder_dropout
+        )
+        decoder = SimpleLSTMDecoder(
+            dictionary=task.target_dictionary,
+            encoder_hidden_dim=args.encoder_hidden_dim,
+            embed_dim=args.decoder_embed_dim,
+            hidden_dim=args.decoder_hidden_dim,
+            dropout=args.decoder_dropout
+        )
+        model = cls(encoder, decoder)
+
+        # Print the model architecture.
+        print(model)
+
+        return model
 
 
 @register_model_architecture('npmt', 'npmt_iwslt_de_en')
-def tutorial_simple_lstm(args):
+def npmt_iwslt_de_en(args):
     # We use ``getattr()`` to prioritize arguments that are explicitly given
     # on the command-line, so that the defaults defined below are only used
     # when no other value has been specified.
@@ -78,7 +139,7 @@ def tutorial_simple_lstm(args):
     args.use_resnet_enc = getattr(args, 'use_resnet_enc', False)                    # use resnet connections in enc
     args.use_resnet_dec = getattr(args, 'use_resnet_dec', False)                    # use resnet connections in dec
     args.npmt_dropout = getattr(args, 'npmt_dropout', 0.5)                          # npmt dropout factor
-    args.rnn_mode = getattr(args, 'rnn_mode', "LSTM")                               # or GRU
+    args.rnn_mode = getattr(args, 'rnn_mode', 'LSTM')                               # or GRU
     args.use_cuda = getattr(args, 'use_cuda', True)                                 # use cuda
     args.beam = getattr(args, 'beam', 10)                                           # beam size
     args.group_size = getattr(args, 'group_size', 512)                              # group size
@@ -106,3 +167,122 @@ def tutorial_simple_lstm(args):
     args.targetlang = getattr(args, 'targetlang', 'en')                             # Target Language
     args.datadir = getattr(args, 'datadir', 'data-bin/iwslt16.tokenized.de-en')     # Pre-processed data directory
     args.model = getattr(args, 'model', 'npmt')                                     # Model to be used for train/dev/test
+    args.encoder_embed_dim = getattr(args, 'encoder_embed_dim', 256)
+    args.encoder_hidden_dim = getattr(args, 'encoder_hidden_dim', 256)
+    args.decoder_embed_dim = getattr(args, 'decoder_embed_dim', 256)
+    args.decoder_hidden_dim = getattr(args, 'decoder_hidden_dim', 256)
+    # args.encoder_dropout = getattr(args, 'encoder_dropout', 0.1)
+
+
+
+@register_task('load_dataset')
+class LoadDataset(FairseqTask):
+    @staticmethod
+    def add_args(parser):
+        """Add task-specific arguments to the parser."""
+        # fmt: off
+        parser.add_argument('data', nargs='+', help='path(s) to data directorie(s)')
+        parser.add_argument('-s', '--source-lang', metavar='SRC', default='de',
+                            help='source language')
+        parser.add_argument('-t', '--target-lang', metavar='TARGET',
+                            help='target language')
+        parser.add_argument('--lazy-load', action='store_true',
+                            help='load the dataset lazily')
+        parser.add_argument('--raw-text', action='store_true',
+                            help='load raw text dataset')
+        parser.add_argument('--left-pad-source', default='True', type=str, metavar='BOOL',
+                            help='pad the source on the left')
+        parser.add_argument('--left-pad-target', default='False', type=str, metavar='BOOL',
+                            help='pad the target on the left')
+        parser.add_argument('--max-source-positions',type=int, metavar='N',
+                            help='max number of tokens in the source sequence')
+        parser.add_argument('--max-target-positions',  type=int, metavar='N',
+                            help='max number of tokens in the target sequence')
+        parser.add_argument('--upsample-primary',type=int,
+                            help='amount to upsample primary dataset')
+        # fmt: on
+
+    def __init__(self, args, src_dict, tgt_dict):
+        super().__init__(args)
+        self.src_dict = src_dict
+        self.tgt_dict = tgt_dict
+
+    @classmethod
+    def setup_task(cls, args, **kwargs):
+        src_dict = cls.load_dictionary(os.path.join(args.data[0], 'dict.{}.txt'.format(args.source_lang)))
+        tgt_dict = cls.load_dictionary(os.path.join(args.data[0], 'dict.{}.txt'.format(args.target_lang)))
+        assert src_dict.pad() == tgt_dict.pad()
+        assert src_dict.eos() == tgt_dict.eos()
+        assert src_dict.unk() == tgt_dict.unk()
+        print('| [{}] dictionary: {} types'.format(args.source_lang, len(src_dict)))
+        print('| [{}] dictionary: {} types'.format(args.target_lang, len(tgt_dict)))
+        return cls(args, src_dict, tgt_dict)
+    
+    def load_dataset(self, split, combine=False, **kwargs):
+        # Load a given dataset
+        def split_exists(split, src, tgt, lang, data_path):
+            filename = os.path.join(data_path, '{}.{}-{}.{}'.format(split, src, tgt, lang))
+            if self.args.raw_text and IndexedRawTextDataset.exists(filename):
+                return True
+            elif not self.args.raw_text and IndexedDataset.exists(filename):
+                return True
+            return False
+
+        def indexed_dataset(path, dictionary):
+            if self.args.raw_text:
+                return IndexedRawTextDataset(path, dictionary)
+            elif IndexedDataset.exists(path):
+                if self.args.lazy_load:
+                    return IndexedDataset(path, fix_lua_indexing=True)
+                else:
+                    return IndexedCachedDataset(path, fix_lua_indexing=True)
+            return None
+        
+        src_datasets = []
+        tgt_datasets = []
+        data_paths = self.args.data
+        for dk, data_path in enumerate(data_paths):
+            print(dk, data_path)
+            for k in itertools.count():
+                split_k = split + (str(k) if k > 0 else '')
+                print("k: ", k)
+                # infer langcode
+                src, tgt = self.args.source_lang, self.args.target_lang
+                if split_exists(split_k, src, tgt, src, data_path):
+                    prefix = os.path.join(data_path, '{}.{}-{}.'.format(split_k, src, tgt))
+                    print("prefix",prefix)
+                elif split_exists(split_k, tgt, src, src, data_path):
+                    prefix = os.path.join(data_path, '{}.{}-{}.'.format(split_k, tgt, src))
+                    print("prefix2",prefix)
+                else:
+                    if k > 0 or dk > 0:
+                        break
+                    else:
+                        raise FileNotFoundError('Dataset not found: {} ({})'.format(split, data_path))
+
+                src_datasets.append(indexed_dataset(prefix + src, self.src_dict))
+                tgt_datasets.append(indexed_dataset(prefix + tgt, self.tgt_dict))
+
+                print('| {} {} {} {} examples'.format(k, data_path, split_k, len(src_datasets[-1])))
+
+                if not combine:
+                    break
+        print('here')
+        assert len(src_datasets) == len(tgt_datasets)
+
+        if len(src_datasets) == 1:
+            src_dataset, tgt_dataset = src_datasets[0], tgt_datasets[0]
+        else:
+            sample_ratios = [1] * len(src_datasets)
+            sample_ratios[0] = self.args.upsample_primary
+            src_dataset = ConcatDataset(src_datasets, sample_ratios)
+            tgt_dataset = ConcatDataset(tgt_datasets, sample_ratios)
+
+        self.datasets[split] = LanguagePairDataset(
+            src_dataset, src_dataset.sizes, self.src_dict,
+            tgt_dataset, tgt_dataset.sizes, self.tgt_dict,
+            left_pad_source=self.args.left_pad_source,
+            left_pad_target=self.args.left_pad_target,
+            max_source_positions=self.args.max_source_positions,
+            max_target_positions=self.args.max_target_positions,
+        )
