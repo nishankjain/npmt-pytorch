@@ -148,6 +148,7 @@ class LSTMModel(FairseqModel):
             dropout_out=args.encoder_dropout_out,
             bidirectional=args.encoder_bidirectional,
             pretrained_embed=pretrained_encoder_embed,
+            window_size=args.window_size
         )
         decoder = LSTMDecoder(
             dictionary=task.target_dictionary,
@@ -164,7 +165,7 @@ class LSTMModel(FairseqModel):
             adaptive_softmax_cutoff=(
                 options.eval_str_list(args.adaptive_softmax_cutoff, type=int)
                 if args.criterion == 'adaptive_loss' else None
-            ),
+            )
         )
         return cls(encoder, decoder)
 
@@ -174,7 +175,7 @@ class LSTMEncoder(FairseqEncoder):
     def __init__(
         self, dictionary, embed_dim=512, hidden_size=512, num_layers=1,
         dropout_in=0.1, dropout_out=0.1, bidirectional=False,
-        left_pad=True, pretrained_embed=None, padding_value=0.,
+        left_pad=True, pretrained_embed=None, padding_value=0., window_size=7
     ):
         super().__init__(dictionary)
         self.num_layers = num_layers
@@ -182,6 +183,7 @@ class LSTMEncoder(FairseqEncoder):
         self.dropout_out = dropout_out
         self.bidirectional = bidirectional
         self.hidden_size = hidden_size
+        self.window_size = window_size
 
         num_embeddings = len(dictionary)
         self.padding_idx = dictionary.pad()
@@ -203,6 +205,8 @@ class LSTMEncoder(FairseqEncoder):
         self.output_units = hidden_size
         if bidirectional:
             self.output_units *= 2
+        
+        self.reordering = winAttn(embed_dim, self.window_size, self.padding_idx)
 
     def forward(self, src_tokens, src_lengths):
         if self.left_pad:
@@ -218,6 +222,7 @@ class LSTMEncoder(FairseqEncoder):
         # embed tokens
         x = self.embed_tokens(src_tokens)
         x = F.dropout(x, p=self.dropout_in, training=self.training)
+        x = self.reordering(x)
 
         # B x T x C -> T x B x C
         x = x.transpose(0, 1)
@@ -533,6 +538,7 @@ def lstm_wiseman_iwslt_de_en(args):
     args.decoder_out_embed_dim = getattr(args, 'decoder_out_embed_dim', 512)
     args.decoder_dropout_in = getattr(args, 'decoder_dropout_in', 0.5)
     args.decoder_dropout_out = getattr(args, 'decoder_dropout_out', args.dropout)
+    args.window_size = getattr(args, 'window_size', 7)
     base_architecture(args)
 
 
