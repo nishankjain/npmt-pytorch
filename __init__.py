@@ -217,7 +217,7 @@ class LSTMEncoder(FairseqEncoder):
         if bidirectional:
             self.output_units *= 2
         
-        self.reordering = SoftReordering(embed_dim, self.window_size, self.padding_idx)
+        # self.reordering = SoftReordering(embed_dim, self.window_size, self.padding_idx)
 
     def forward(self, src_tokens, src_lengths):
         if self.left_pad:
