@@ -16,6 +16,7 @@ class winUnit(nn.Module):
         weighted_input = weighted_embeddings_window_sigmoid * padded_sequence_window
         score = torch.sum(weighted_input, dim=1)
         self.ht = self.tanh(score)
+        print("ht size: ", ht.size())
         return self.ht
 
     def clearState(self):
