@@ -16,6 +16,8 @@ from . import (
     register_model_architecture,
 )
 
+from .SoftReordering import winAttn
+
 
 @register_model('lstm')
 class LSTMModel(FairseqModel):
