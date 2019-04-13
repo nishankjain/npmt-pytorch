@@ -1,18 +1,21 @@
+# Copyright (c) 2017-present, Facebook, Inc.
+# All rights reserved.
+#
+# This source code is licensed under the license found in the LICENSE file in
+# the root directory of this source tree. An additional grant of patent rights
+# can be found in the PATENTS file in the same directory.
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from .SimpleLSTMDecoder import SimpleLSTMDecoder
-from .SimpleLSTMEncoder import SimpleLSTMEncoder
 
 from fairseq import options, utils
 from fairseq.modules import AdaptiveSoftmax
 from fairseq.models import (
-    FairseqEncoder,
-    FairseqIncrementalDecoder,
-    FairseqModel,
-    register_model,
-    register_model_architecture
+    FairseqEncoder, FairseqIncrementalDecoder, FairseqModel, register_model,
+    register_model_architecture,
 )
+
 import os, itertools, sys
 from fairseq.tasks import FairseqTask, register_task
 from fairseq.data import (
@@ -25,156 +28,544 @@ from fairseq.data import (
     LanguagePairDataset
 )
 
+from .SoftReordering import SoftReordering
+
 
 @register_model('npmt')
-class NPMTModel(FairseqModel):
+class LSTMModel(FairseqModel):
     def __init__(self, encoder, decoder):
-        return super().__init__(encoder, decoder)
-    
+        super().__init__(encoder, decoder)
+
     @staticmethod
     def add_args(parser):
         """Add model-specific arguments to the parser."""
-        parser.add_argument('--max-segment-len', type=int, metavar='N', help='maximum segment length in the output')
-        parser.add_argument('--num-lower-win-layers', type=int, metavar='N', help='reorder layer')
-        parser.add_argument('--use-win-middle', action='store_true', help='reorder layer with window centered at t')
-        parser.add_argument('--dec-unit-size', type=int, metavar='N', help='number of hidden units per layer in decoder (uni-directional)')
-        parser.add_argument('--word-weight', type=float, metavar='D', help='Use word weight')
-        parser.add_argument('--lm-weight', type=float, metavar='D', help='external lm weight')
-        parser.add_argument('--lm-path', type=str, metavar='STR', help='external lm path')
-        parser.add_argument('--use-resnet-enc', action='store_true', help='use resnet connections in enc')
-        parser.add_argument('--use-resnet-dec', action='store_true', help='use resnet connections in dec')
-        parser.add_argument('--npmt-dropout', type=float, metavar='D', help='npmt dropout factor')
-        parser.add_argument('--rnn-mode', type=float, metavar='D', help='or GRU')
-        parser.add_argument('--use-cuda', action='store_true', help='use cuda')
-        parser.add_argument('--beam', type=int, metavar='N', help='beam size')
-        parser.add_argument('--group-size', type=int, metavar='N', help='group size')
-        parser.add_argument('--use-accel', action='store_true', help='use C++/CUDA acceleration')
-        parser.add_argument('--conv-kW-size', type=int, metavar='N', help='kernel width for temporal conv layer')
-        parser.add_argument('--conv-dW-size', type=int, metavar='N', help='kernel stride for temporal conv layer')
-        parser.add_argument('--num-lower-conv-layers', type=int, metavar='N', help='num lower temporal conv layers')
-        parser.add_argument('--num-mid-conv-layers', type=int, metavar='N', help='num mid temporal conv layers')
-        parser.add_argument('--num-high-conv-layers', type=int, metavar='N', help='num higher temporal conv layers')
-        parser.add_argument('--win-attn-type', type=str, metavar='STR', help='ori: original')
-        parser.add_argument('--reset-lrate', action='store_true', help='True reset learning rate after reloading')
-        parser.add_argument('--use-nnlm', action='store_true', help='True use a separated RNN')
-        parser.add_argument('--window-size', type=int, metavar='N', help='Window size for reordering layer')
-        parser.add_argument('--nenclayer', type=int, metavar='N', help='Number of bi-directional GRU encoder layers')
-        parser.add_argument('--ndeclayer', type=int, metavar='N', help='Number of GRU decoder layers')
-        parser.add_argument('--nhid', type=int, metavar='N', help='Number of hidden units per encoder layer (bi-directional)')
-        parser.add_argument('--dropout-src', type=float, metavar='D', help='dropout on source embeddings')
-        parser.add_argument('--dropout-tgt', type=float, metavar='D', help='dropout on target embeddings')
-        parser.add_argument('--dropout-out', type=float, metavar='D', help='dropout on decoder output')
-        parser.add_argument('--dropout-hid', type=float, metavar='D', help='dropout between layers')
-        parser.add_argument('--dropout', type=float, metavar='D', help='Overall dropout')
-        # parser.add_argument('--batch-size', type=int, metavar='N', help='Batch Size')
-        parser.add_argument('--optim', type=str, metavar='STR', help='Optimizer')
-        # parser.add_argument('--lr', type=float, metavar='D', help='Learning Rate')
-        parser.add_argument('--sourcelang', type=str, metavar='STR', help='Source Language')
-        parser.add_argument('--targetlang', type=str, metavar='STR', help='Target Language')
-        parser.add_argument('--datadir', type=str, metavar='STR', help='Pre-processed data directory')
-        parser.add_argument('--model', type=str, metavar='STR', help='Model to be used for train/dev/test')
-        parser.add_argument(
-            '--encoder-embed-dim', type=int, metavar='N',
-            help='dimensionality of the encoder embeddings',
-        )
-        parser.add_argument(
-            '--encoder-hidden-dim', type=int, metavar='N',
-            help='dimensionality of the encoder hidden state',
-        )
-        parser.add_argument(
-            '--encoder-dropout', type=float, default=0.1,
-            help='encoder dropout probability',
-        )
-        parser.add_argument(
-            '--decoder-embed-dim', type=int, metavar='N',
-            help='dimensionality of the decoder embeddings',
-        )
-        parser.add_argument(
-            '--decoder-hidden-dim', type=int, metavar='N',
-            help='dimensionality of the decoder hidden state',
-        )
-        parser.add_argument(
-            '--decoder-dropout', type=float, default=0.1,
-            help='decoder dropout probability',
-        )
+        # fmt: off
+        parser.add_argument('--dropout', type=float, metavar='D',
+                            help='dropout probability')
+        parser.add_argument('--encoder-embed-dim', type=int, metavar='N',
+                            help='encoder embedding dimension')
+        parser.add_argument('--encoder-embed-path', type=str, metavar='STR',
+                            help='path to pre-trained encoder embedding')
+        parser.add_argument('--encoder-freeze-embed', action='store_true',
+                            help='freeze encoder embeddings')
+        parser.add_argument('--encoder-hidden-size', type=int, metavar='N',
+                            help='encoder hidden size')
+        parser.add_argument('--encoder-layers', type=int, metavar='N',
+                            help='number of encoder layers')
+        parser.add_argument('--encoder-bidirectional', action='store_true',
+                            help='make all layers of encoder bidirectional')
+        parser.add_argument('--decoder-embed-dim', type=int, metavar='N',
+                            help='decoder embedding dimension')
+        parser.add_argument('--decoder-embed-path', type=str, metavar='STR',
+                            help='path to pre-trained decoder embedding')
+        parser.add_argument('--decoder-freeze-embed', action='store_true',
+                            help='freeze decoder embeddings')
+        parser.add_argument('--decoder-hidden-size', type=int, metavar='N',
+                            help='decoder hidden size')
+        parser.add_argument('--decoder-layers', type=int, metavar='N',
+                            help='number of decoder layers')
+        parser.add_argument('--decoder-out-embed-dim', type=int, metavar='N',
+                            help='decoder output embedding dimension')
+        parser.add_argument('--decoder-attention', type=str, metavar='BOOL',
+                            help='decoder attention')
+        parser.add_argument('--adaptive-softmax-cutoff', metavar='EXPR',
+                            help='comma separated list of adaptive softmax cutoff points. '
+                                 'Must be used with adaptive_loss criterion')
+        parser.add_argument('--share-decoder-input-output-embed', default=False,
+                            action='store_true',
+                            help='share decoder input and output embeddings')
+        parser.add_argument('--share-all-embeddings', default=False, action='store_true',
+                            help='share encoder, decoder and output embeddings'
+                                 ' (requires shared dictionary and embed dim)')
+
+        # Granular dropout settings (if not specified these default to --dropout)
+        parser.add_argument('--encoder-dropout-in', type=float, metavar='D',
+                            help='dropout probability for encoder input embedding')
+        parser.add_argument('--encoder-dropout-out', type=float, metavar='D',
+                            help='dropout probability for encoder output')
+        parser.add_argument('--decoder-dropout-in', type=float, metavar='D',
+                            help='dropout probability for decoder input embedding')
+        parser.add_argument('--decoder-dropout-out', type=float, metavar='D',
+                            help='dropout probability for decoder output')
+        # fmt: on
 
     @classmethod
     def build_model(cls, args, task):
-        # encoder = None
-        # decoder = None
-        # return cls(encoder, decoder)
-        encoder = SimpleLSTMEncoder(
-            args=args,
+        """Build a new model instance."""
+        # make sure that all args are properly defaulted (in case there are any new ones)
+        base_architecture(args)
+
+        if args.encoder_layers != args.decoder_layers:
+            raise ValueError('--encoder-layers must match --decoder-layers')
+
+        def load_pretrained_embedding_from_file(embed_path, dictionary, embed_dim):
+            num_embeddings = len(dictionary)
+            padding_idx = dictionary.pad()
+            embed_tokens = Embedding(num_embeddings, embed_dim, padding_idx)
+            embed_dict = utils.parse_embedding(embed_path)
+            utils.print_embed_overlap(embed_dict, dictionary)
+            return utils.load_embedding(embed_dict, dictionary, embed_tokens)
+
+        if args.encoder_embed_path:
+            pretrained_encoder_embed = load_pretrained_embedding_from_file(
+                args.encoder_embed_path, task.source_dictionary, args.encoder_embed_dim)
+        else:
+            num_embeddings = len(task.source_dictionary)
+            pretrained_encoder_embed = Embedding(
+                num_embeddings, args.encoder_embed_dim, task.source_dictionary.pad()
+            )
+
+        if args.share_all_embeddings:
+            # double check all parameters combinations are valid
+            if task.source_dictionary != task.target_dictionary:
+                raise ValueError('--share-all-embeddings requires a joint dictionary')
+            if args.decoder_embed_path and (
+                    args.decoder_embed_path != args.encoder_embed_path):
+                raise ValueError(
+                    '--share-all-embed not compatible with --decoder-embed-path'
+                )
+            if args.encoder_embed_dim != args.decoder_embed_dim:
+                raise ValueError(
+                    '--share-all-embeddings requires --encoder-embed-dim to '
+                    'match --decoder-embed-dim'
+                )
+            pretrained_decoder_embed = pretrained_encoder_embed
+            args.share_decoder_input_output_embed = True
+        else:
+            # separate decoder input embeddings
+            pretrained_decoder_embed = None
+            if args.decoder_embed_path:
+                pretrained_decoder_embed = load_pretrained_embedding_from_file(
+                    args.decoder_embed_path,
+                    task.target_dictionary,
+                    args.decoder_embed_dim
+                )
+        # one last double check of parameter combinations
+        if args.share_decoder_input_output_embed and (
+                args.decoder_embed_dim != args.decoder_out_embed_dim):
+            raise ValueError(
+                '--share-decoder-input-output-embeddings requires '
+                '--decoder-embed-dim to match --decoder-out-embed-dim'
+            )
+
+        if args.encoder_freeze_embed:
+            pretrained_encoder_embed.weight.requires_grad = False
+        if args.decoder_freeze_embed:
+            pretrained_decoder_embed.weight.requires_grad = False
+
+        encoder = LSTMEncoder(
             dictionary=task.source_dictionary,
             embed_dim=args.encoder_embed_dim,
-            hidden_dim=args.encoder_hidden_dim,
-            dropout=args.npmt_dropout
+            hidden_size=args.encoder_hidden_size,
+            num_layers=args.encoder_layers,
+            dropout_in=args.encoder_dropout_in,
+            dropout_out=args.encoder_dropout_out,
+            bidirectional=args.encoder_bidirectional,
+            pretrained_embed=pretrained_encoder_embed,
+            window_size=args.window_size
         )
-        decoder = SimpleLSTMDecoder(
+        decoder = LSTMDecoder(
             dictionary=task.target_dictionary,
-            encoder_hidden_dim=args.encoder_hidden_dim,
             embed_dim=args.decoder_embed_dim,
-            hidden_dim=args.decoder_hidden_dim,
-            dropout=args.npmt_dropout
+            hidden_size=args.decoder_hidden_size,
+            out_embed_dim=args.decoder_out_embed_dim,
+            num_layers=args.decoder_layers,
+            dropout_in=args.decoder_dropout_in,
+            dropout_out=args.decoder_dropout_out,
+            attention=options.eval_bool(args.decoder_attention),
+            encoder_output_units=encoder.output_units,
+            pretrained_embed=pretrained_decoder_embed,
+            share_input_output_embed=args.share_decoder_input_output_embed,
+            adaptive_softmax_cutoff=(
+                options.eval_str_list(args.adaptive_softmax_cutoff, type=int)
+                if args.criterion == 'adaptive_loss' else None
+            )
         )
-        model = cls(encoder, decoder)
+        return cls(encoder, decoder)
 
-        # Print the model architecture.
-        # print(model)
-        # sys.exit()
-        return model
+
+class LSTMEncoder(FairseqEncoder):
+    """LSTM encoder."""
+    def __init__(
+        self, dictionary, embed_dim=512, hidden_size=512, num_layers=1,
+        dropout_in=0.1, dropout_out=0.1, bidirectional=False,
+        left_pad=True, pretrained_embed=None, padding_value=0., window_size=7
+    ):
+        super().__init__(dictionary)
+        self.num_layers = num_layers
+        self.dropout_in = dropout_in
+        self.dropout_out = dropout_out
+        self.bidirectional = bidirectional
+        self.hidden_size = hidden_size
+        self.window_size = window_size
+
+        num_embeddings = len(dictionary)
+        self.padding_idx = dictionary.pad()
+        if pretrained_embed is None:
+            self.embed_tokens = Embedding(num_embeddings, embed_dim, self.padding_idx)
+        else:
+            self.embed_tokens = pretrained_embed
+
+        self.lstm = LSTM(
+            input_size=embed_dim,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            dropout=self.dropout_out if num_layers > 1 else 0.,
+            bidirectional=bidirectional
+        )
+        self.left_pad = left_pad
+        self.padding_value = padding_value
+
+        self.output_units = hidden_size
+        if bidirectional:
+            self.output_units *= 2
+        
+        self.reordering = SoftReordering(embed_dim, self.window_size, self.padding_idx)
+
+    def forward(self, src_tokens, src_lengths):
+        if self.left_pad:
+            # convert left-padding to right-padding
+            src_tokens = utils.convert_padding_direction(
+                src_tokens,
+                self.padding_idx,
+                left_to_right=True,
+            )
+
+        bsz, seqlen = src_tokens.size()
+
+        # embed tokens
+        x = self.embed_tokens(src_tokens)
+        x = F.dropout(x, p=self.dropout_in, training=self.training)
+        x = self.reordering(x)
+
+        # B x T x C -> T x B x C
+        x = x.transpose(0, 1)
+
+        # pack embedded source tokens into a PackedSequence
+        packed_x = nn.utils.rnn.pack_padded_sequence(x, src_lengths.data.tolist())
+
+        # apply LSTM
+        if self.bidirectional:
+            state_size = 2 * self.num_layers, bsz, self.hidden_size
+        else:
+            state_size = self.num_layers, bsz, self.hidden_size
+        h0 = x.new_zeros(*state_size)
+        c0 = x.new_zeros(*state_size)
+        packed_outs, (final_hiddens, final_cells) = self.lstm(packed_x, (h0, c0))
+
+        # unpack outputs and apply dropout
+        x, _ = nn.utils.rnn.pad_packed_sequence(packed_outs, padding_value=self.padding_value)
+        x = F.dropout(x, p=self.dropout_out, training=self.training)
+        assert list(x.size()) == [seqlen, bsz, self.output_units]
+
+        if self.bidirectional:
+
+            def combine_bidir(outs):
+                out = outs.view(self.num_layers, 2, bsz, -1).transpose(1, 2).contiguous()
+                return out.view(self.num_layers, bsz, -1)
+
+            final_hiddens = combine_bidir(final_hiddens)
+            final_cells = combine_bidir(final_cells)
+
+        encoder_padding_mask = src_tokens.eq(self.padding_idx).t()
+
+        return {
+            'encoder_out': (x, final_hiddens, final_cells),
+            'encoder_padding_mask': encoder_padding_mask if encoder_padding_mask.any() else None
+        }
+
+    def reorder_encoder_out(self, encoder_out, new_order):
+        encoder_out['encoder_out'] = tuple(
+            eo.index_select(1, new_order)
+            for eo in encoder_out['encoder_out']
+        )
+        if encoder_out['encoder_padding_mask'] is not None:
+            encoder_out['encoder_padding_mask'] = \
+                encoder_out['encoder_padding_mask'].index_select(1, new_order)
+        return encoder_out
+
+    def max_positions(self):
+        """Maximum input length supported by the encoder."""
+        return int(1e5)  # an arbitrary large number
+
+
+class AttentionLayer(nn.Module):
+    def __init__(self, input_embed_dim, source_embed_dim, output_embed_dim, bias=False):
+        super().__init__()
+
+        self.input_proj = Linear(input_embed_dim, source_embed_dim, bias=bias)
+        self.output_proj = Linear(input_embed_dim + source_embed_dim, output_embed_dim, bias=bias)
+
+    def forward(self, input, source_hids, encoder_padding_mask):
+        # input: bsz x input_embed_dim
+        # source_hids: srclen x bsz x output_embed_dim
+
+        # x: bsz x output_embed_dim
+        x = self.input_proj(input)
+
+        # compute attention
+        attn_scores = (source_hids * x.unsqueeze(0)).sum(dim=2)
+
+        # don't attend over padding
+        if encoder_padding_mask is not None:
+            attn_scores = attn_scores.float().masked_fill_(
+                encoder_padding_mask,
+                float('-inf')
+            ).type_as(attn_scores)  # FP16 support: cast to float and back
+
+        attn_scores = F.softmax(attn_scores, dim=0)  # srclen x bsz
+
+        # sum weighted sources
+        x = (attn_scores.unsqueeze(2) * source_hids).sum(dim=0)
+
+        x = F.tanh(self.output_proj(torch.cat((x, input), dim=1)))
+        return x, attn_scores
+
+
+class LSTMDecoder(FairseqIncrementalDecoder):
+    """LSTM decoder."""
+    def __init__(
+        self, dictionary, embed_dim=512, hidden_size=512, out_embed_dim=512,
+        num_layers=1, dropout_in=0.1, dropout_out=0.1, attention=False,
+        encoder_output_units=512, pretrained_embed=None,
+        share_input_output_embed=False, adaptive_softmax_cutoff=None,
+    ):
+        super().__init__(dictionary)
+        self.dropout_in = dropout_in
+        self.dropout_out = dropout_out
+        self.hidden_size = hidden_size
+        self.share_input_output_embed = share_input_output_embed
+        self.need_attn = False
+
+        self.adaptive_softmax = None
+        num_embeddings = len(dictionary)
+        padding_idx = dictionary.pad()
+        if pretrained_embed is None:
+            self.embed_tokens = Embedding(num_embeddings, embed_dim, padding_idx)
+        else:
+            self.embed_tokens = pretrained_embed
+
+        self.encoder_output_units = encoder_output_units
+        if encoder_output_units != hidden_size:
+            self.encoder_hidden_proj = Linear(encoder_output_units, hidden_size)
+            self.encoder_cell_proj = Linear(encoder_output_units, hidden_size)
+        else:
+            self.encoder_hidden_proj = self.encoder_cell_proj = None
+        self.layers = nn.ModuleList([
+            LSTMCell(
+                input_size=hidden_size + embed_dim if layer == 0 else hidden_size,
+                hidden_size=hidden_size,
+            )
+            for layer in range(num_layers)
+        ])
+        if attention:
+            # TODO make bias configurable
+            self.attention = AttentionLayer(hidden_size, encoder_output_units, hidden_size, bias=False)
+        else:
+            self.attention = None
+        if hidden_size != out_embed_dim:
+            self.additional_fc = Linear(hidden_size, out_embed_dim)
+        if adaptive_softmax_cutoff is not None:
+            # setting adaptive_softmax dropout to dropout_out for now but can be redefined
+            self.adaptive_softmax = AdaptiveSoftmax(num_embeddings, embed_dim, adaptive_softmax_cutoff,
+                                                    dropout=dropout_out)
+        elif not self.share_input_output_embed:
+            self.fc_out = Linear(out_embed_dim, num_embeddings, dropout=dropout_out)
+
+    def forward(self, prev_output_tokens, encoder_out_dict, incremental_state=None):
+        encoder_out = encoder_out_dict['encoder_out']
+        encoder_padding_mask = encoder_out_dict['encoder_padding_mask']
+
+        if incremental_state is not None:
+            prev_output_tokens = prev_output_tokens[:, -1:]
+        bsz, seqlen = prev_output_tokens.size()
+
+        # get outputs from encoder
+        encoder_outs, encoder_hiddens, encoder_cells = encoder_out[:3]
+        srclen = encoder_outs.size(0)
+
+        # embed tokens
+        x = self.embed_tokens(prev_output_tokens)
+        x = F.dropout(x, p=self.dropout_in, training=self.training)
+
+        # B x T x C -> T x B x C
+        x = x.transpose(0, 1)
+
+        # initialize previous states (or get from cache during incremental generation)
+        cached_state = utils.get_incremental_state(self, incremental_state, 'cached_state')
+        if cached_state is not None:
+            prev_hiddens, prev_cells, input_feed = cached_state
+        else:
+            num_layers = len(self.layers)
+            prev_hiddens = [encoder_hiddens[i] for i in range(num_layers)]
+            prev_cells = [encoder_cells[i] for i in range(num_layers)]
+            if self.encoder_hidden_proj is not None:
+                prev_hiddens = [self.encoder_hidden_proj(x) for x in prev_hiddens]
+                prev_cells = [self.encoder_cell_proj(x) for x in prev_cells]
+            input_feed = x.new_zeros(bsz, self.hidden_size)
+
+        attn_scores = x.new_zeros(srclen, seqlen, bsz)
+        outs = []
+        for j in range(seqlen):
+            # input feeding: concatenate context vector from previous time step
+            input = torch.cat((x[j, :, :], input_feed), dim=1)
+
+            for i, rnn in enumerate(self.layers):
+                # recurrent cell
+                hidden, cell = rnn(input, (prev_hiddens[i], prev_cells[i]))
+
+                # hidden state becomes the input to the next layer
+                input = F.dropout(hidden, p=self.dropout_out, training=self.training)
+
+                # save state for next time step
+                prev_hiddens[i] = hidden
+                prev_cells[i] = cell
+
+            # apply attention using the last layer's hidden state
+            if self.attention is not None:
+                out, attn_scores[:, j, :] = self.attention(hidden, encoder_outs, encoder_padding_mask)
+            else:
+                out = hidden
+            out = F.dropout(out, p=self.dropout_out, training=self.training)
+
+            # input feeding
+            input_feed = out
+
+            # save final output
+            outs.append(out)
+
+        # cache previous states (no-op except during incremental generation)
+        utils.set_incremental_state(
+            self, incremental_state, 'cached_state',
+            (prev_hiddens, prev_cells, input_feed),
+        )
+
+        # collect outputs across time steps
+        x = torch.cat(outs, dim=0).view(seqlen, bsz, self.hidden_size)
+
+        # T x B x C -> B x T x C
+        x = x.transpose(1, 0)
+
+        # srclen x tgtlen x bsz -> bsz x tgtlen x srclen
+        if not self.training and self.need_attn:
+            attn_scores = attn_scores.transpose(0, 2)
+        else:
+            attn_scores = None
+
+        # project back to size of vocabulary
+        if self.adaptive_softmax is None:
+            if hasattr(self, 'additional_fc'):
+                x = self.additional_fc(x)
+                x = F.dropout(x, p=self.dropout_out, training=self.training)
+            if self.share_input_output_embed:
+                x = F.linear(x, self.embed_tokens.weight)
+            else:
+                x = self.fc_out(x)
+        return x, attn_scores
+
+    def reorder_incremental_state(self, incremental_state, new_order):
+        super().reorder_incremental_state(incremental_state, new_order)
+        cached_state = utils.get_incremental_state(self, incremental_state, 'cached_state')
+        if cached_state is None:
+            return
+
+        def reorder_state(state):
+            if isinstance(state, list):
+                return [reorder_state(state_i) for state_i in state]
+            return state.index_select(0, new_order)
+
+        new_state = tuple(map(reorder_state, cached_state))
+        utils.set_incremental_state(self, incremental_state, 'cached_state', new_state)
+
+    def max_positions(self):
+        """Maximum output length supported by the decoder."""
+        return int(1e5)  # an arbitrary large number
+
+    def make_generation_fast_(self, need_attn=False, **kwargs):
+        self.need_attn = need_attn
+
+
+def Embedding(num_embeddings, embedding_dim, padding_idx):
+    m = nn.Embedding(num_embeddings, embedding_dim, padding_idx=padding_idx)
+    nn.init.uniform_(m.weight, -0.1, 0.1)
+    nn.init.constant_(m.weight[padding_idx], 0)
+    return m
+
+
+def LSTM(input_size, hidden_size, **kwargs):
+    m = nn.LSTM(input_size, hidden_size, **kwargs)
+    for name, param in m.named_parameters():
+        if 'weight' in name or 'bias' in name:
+            param.data.uniform_(-0.1, 0.1)
+    return m
+
+
+def LSTMCell(input_size, hidden_size, **kwargs):
+    m = nn.LSTMCell(input_size, hidden_size, **kwargs)
+    for name, param in m.named_parameters():
+        if 'weight' in name or 'bias' in name:
+            param.data.uniform_(-0.1, 0.1)
+    return m
+
+
+def Linear(in_features, out_features, bias=True, dropout=0):
+    """Linear layer (input: N x T x C)"""
+    m = nn.Linear(in_features, out_features, bias=bias)
+    m.weight.data.uniform_(-0.1, 0.1)
+    if bias:
+        m.bias.data.uniform_(-0.1, 0.1)
+    return m
+
+
+@register_model_architecture('npmt', 'npmt')
+def base_architecture(args):
+    args.dropout = getattr(args, 'dropout', 0.5)
+    args.encoder_embed_dim = getattr(args, 'encoder_embed_dim', 256)
+    args.encoder_embed_path = getattr(args, 'encoder_embed_path', None)
+    args.encoder_freeze_embed = getattr(args, 'encoder_freeze_embed', False)
+    args.encoder_hidden_size = getattr(args, 'encoder_hidden_size', args.encoder_embed_dim)
+    args.encoder_layers = getattr(args, 'encoder_layers', 2)
+    args.encoder_bidirectional = getattr(args, 'encoder_bidirectional', True)
+    args.encoder_dropout_in = getattr(args, 'encoder_dropout_in', args.dropout)
+    args.encoder_dropout_out = getattr(args, 'encoder_dropout_out', args.dropout)
+    args.decoder_embed_dim = getattr(args, 'decoder_embed_dim', 512)
+    args.decoder_embed_path = getattr(args, 'decoder_embed_path', None)
+    args.decoder_freeze_embed = getattr(args, 'decoder_freeze_embed', False)
+    args.decoder_hidden_size = getattr(args, 'decoder_hidden_size', args.decoder_embed_dim)
+    args.decoder_layers = getattr(args, 'decoder_layers', 2)
+    args.decoder_out_embed_dim = getattr(args, 'decoder_out_embed_dim', 512)
+    args.decoder_attention = getattr(args, 'decoder_attention', '0')
+    args.decoder_dropout_in = getattr(args, 'decoder_dropout_in', args.dropout)
+    args.decoder_dropout_out = getattr(args, 'decoder_dropout_out', args.dropout)
+    args.share_decoder_input_output_embed = getattr(args, 'share_decoder_input_output_embed', False)
+    args.share_all_embeddings = getattr(args, 'share_all_embeddings', False)
+    args.adaptive_softmax_cutoff = getattr(args, 'adaptive_softmax_cutoff', '10000,50000,200000')
 
 
 @register_model_architecture('npmt', 'npmt_iwslt_de_en')
-def npmt_iwslt_de_en(args):
-    # We use ``getattr()`` to prioritize arguments that are explicitly given
-    # on the command-line, so that the defaults defined below are only used
-    # when no other value has been specified.
-    args.max_segment_len = getattr(args, 'max_segment_len', 6)                      # maximum segment length in the output
-    args.num_lower_win_layers = getattr(args, 'num_lower_win_layers', 0)            # reorder layer
-    args.use_win_middle = getattr(args, 'use_win_middle', True)                     # reorder layer with window centered at t
-    args.dec_unit_size = getattr(args, 'dec_unit_size', 512)                        # number of hidden units per layer in decoder (uni-directional)
-    args.word_weight = getattr(args, 'word_weight', 0.5)                            # Use word weight.
-    args.lm_weight = getattr(args, 'lm_weight', 0.0)                                # external lm weight.
-    args.lm_path = getattr(args, 'lm_path', "")                                     # external lm path.
-    args.use_resnet_enc = getattr(args, 'use_resnet_enc', False)                    # use resnet connections in enc
-    args.use_resnet_dec = getattr(args, 'use_resnet_dec', False)                    # use resnet connections in dec
-    args.npmt_dropout = getattr(args, 'npmt_dropout', 0.5)                          # npmt dropout factor
-    args.rnn_mode = getattr(args, 'rnn_mode', 'LSTM')                               # or GRU
-    args.use_cuda = getattr(args, 'use_cuda', True)                                 # use cuda
-    args.beam = getattr(args, 'beam', 10)                                           # beam size
-    args.group_size = getattr(args, 'group_size', 512)                              # group size
-    args.use_accel = getattr(args, 'use_accel', False)                              # use C++/CUDA acceleration
-    args.conv_kW_size = getattr(args, 'conv_kW_size', 3)                            # kernel width for temporal conv layer
-    args.conv_dW_size = getattr(args, 'conv_dW_size', 2)                            # kernel stride for temporal conv layer
-    args.num_lower_conv_layers = getattr(args, 'num_lower_conv_layers', 0)          # num lower temporal conv layers
-    args.num_mid_conv_layers = getattr(args, 'num_mid_conv_layers', 0)              # num mid temporal conv layers
-    args.num_high_conv_layers = getattr(args, 'num_high_conv_layers', 0)            # num higher temporal conv layers
-    args.win_attn_type = getattr(args, 'win_attn_type', 'ori')                      # ori: original
-    args.reset_lrate = getattr(args, 'reset_lrate', False)                          # True reset learning rate after reloading
-    args.use_nnlm = getattr(args, 'use_nnlm', False)                                # True use a separated RNN
-    args.window_size = getattr(args, 'window_size', 7)                                        # Window width for reordering layer
-    args.nenclayer = getattr(args, 'nenclayer', 2)                                  # Number of bi-directional GRU encoder layers
-    args.ndeclayer = getattr(args, 'ndeclayer', 2)                                  # Number of GRU deocder layers
-    args.nhid = getattr(args, 'nhid', 256)                                          # Number of hidden units per encoder layer (bi-directional)
-    args.dropout_src = getattr(args, 'dropout_src', 0)                              # dropout on source embeddings
-    args.dropout_tgt = getattr(args, 'dropout_tgt', 0)                              # dropout on target embeddings
-    args.dropout_out = getattr(args, 'dropout_out', 0)                              # dropout on decoder output
-    args.dropout_hid = getattr(args, 'dropout_hid', 0)                              # dropout between layers
-    args.dropout = getattr(args, 'dropout', 0.5)                                    # Overall dropout
-    args.batch_size = getattr(args, 'batch_size', 32)                                 # Batch Size
-    args.optim = getattr(args, 'optim', 'adam')                                     # Optimizer
-    args.lr = getattr(args, 'lr', 0.001)                                            # Learning Rate
-    args.sourcelang = getattr(args, 'sourcelang', 'de')                             # Source Language
-    args.targetlang = getattr(args, 'targetlang', 'en')                             # Target Language
-    args.datadir = getattr(args, 'datadir', 'data-bin/iwslt16.tokenized.de-en')     # Pre-processed data directory
-    args.model = getattr(args, 'model', 'npmt')                                     # Model to be used for train/dev/test
+def lstm_wiseman_iwslt_de_en(args):
+    args.dropout = getattr(args, 'dropout', 0.5)
     args.encoder_embed_dim = getattr(args, 'encoder_embed_dim', 256)
-    args.encoder_hidden_dim = getattr(args, 'encoder_hidden_dim', 256)
-    args.decoder_embed_dim = getattr(args, 'decoder_embed_dim', 256)
-    args.decoder_hidden_dim = getattr(args, 'decoder_hidden_dim', 512)
-    # args.encoder_dropout = getattr(args, 'encoder_dropout', 0.1)
+    args.encoder_dropout_in = getattr(args, 'encoder_dropout_in', 0.5)
+    args.encoder_dropout_out = getattr(args, 'encoder_dropout_out', 0.5)
+    args.decoder_embed_dim = getattr(args, 'decoder_embed_dim', 512)
+    args.decoder_out_embed_dim = getattr(args, 'decoder_out_embed_dim', 512)
+    args.decoder_dropout_in = getattr(args, 'decoder_dropout_in', 0.5)
+    args.decoder_dropout_out = getattr(args, 'decoder_dropout_out', args.dropout)
+    args.window_size = getattr(args, 'window_size', 7)
+    base_architecture(args)
 
+
+# @register_model_architecture('npmt', 'lstm_luong_wmt_en_de')
+# def lstm_luong_wmt_en_de(args):
+#     args.encoder_embed_dim = getattr(args, 'encoder_embed_dim', 1000)
+#     args.encoder_layers = getattr(args, 'encoder_layers', 4)
+#     args.encoder_dropout_out = getattr(args, 'encoder_dropout_out', 0)
+#     args.decoder_embed_dim = getattr(args, 'decoder_embed_dim', 1000)
+#     args.decoder_layers = getattr(args, 'decoder_layers', 4)
+#     args.decoder_out_embed_dim = getattr(args, 'decoder_out_embed_dim', 1000)
+#     args.decoder_dropout_out = getattr(args, 'decoder_dropout_out', 0)
+#     base_architecture(args)
 
 
 @register_task('load_dataset')

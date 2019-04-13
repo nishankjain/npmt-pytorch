@@ -1,34 +1,34 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import copy
+import copy, math
 
-class winUnit(nn.Module):
+class WinUnit(nn.Module):
     def __init__(self, emb_dim, window_size):
         super().__init__()
         self.weighted_embeddings = nn.Linear(emb_dim * window_size, window_size)
-        self.sigmoid = nn.Sigmoid()
-        self.tanh = nn.Tanh()
         
-    def forward(padded_sequence_window):
-        weighted_embeddings_window = self.weighted_embeddings(padded_sequence_window)
-        weighted_embeddings_window_sigmoid = self.sigmoid(weighted_embeddings_window)
-        weighted_input = weighted_embeddings_window_sigmoid * padded_sequence_window
+    def forward(self, windowed_padded_seq):
+        (bsz, window_width, emb_dim) = windowed_padded_seq.size()
+        windowed_padded_seq_reshaped = windowed_padded_seq.view(bsz, -1)
+        windowed_weights = self.weighted_embeddings(windowed_padded_seq_reshaped)
+        sigmoided_windowed_weights = torch.sigmoid(windowed_weights)
+        sigmoided_windowed_weights = sigmoided_windowed_weights.unsqueeze(-1).expand(bsz, window_width, emb_dim)
+        weighted_input = sigmoided_windowed_weights * windowed_padded_seq
         score = torch.sum(weighted_input, dim=1)
-        self.ht = self.tanh(score)
-        print("ht size: ", ht.size())
+        self.ht = torch.tanh(score)
         return self.ht
 
     def clearState(self):
         self.zero_grad()
         self.ht = torch.zeros(self.ht.size())
 
-class winAttn(nn.Module):
+class SoftReordering(nn.Module):
     def __init__(self, emb_dim, window_size, padding_idx):
         super().__init__()
         self.padding_idx = padding_idx
         self.window_size = window_size
-        self.winUnit = winUnit(emb_dim, window_size)
+        self.winUnit = WinUnit(emb_dim, window_size)
         self.max_number_of_windows = 0
         self.win_unit_clones = []
 
@@ -42,12 +42,13 @@ class winAttn(nn.Module):
         if self.max_number_of_windows < sequence_length:
             # self.winUnit.clearState()
             for i in range(sequence_length - self.max_number_of_windows):
+                # self.win_unit_clones.append(self.winUnit)
                 self.win_unit_clones.append(copy.deepcopy(self.winUnit))
             self.max_number_of_windows = sequence_length
         # for t in range(sequence_length):
         #     self.win_unit_clones[t].clearState()
         
-        self.output = torch.zeros(input.size())
+        self.output = torch.zeros(input.size()).cuda()
         for t in range(sequence_length):
             x = self.padded_input[:, t:t+self.window_size, :]
             ht = self.win_unit_clones[t](x)
