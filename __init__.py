@@ -13,7 +13,7 @@ from fairseq.models import (
     register_model,
     register_model_architecture
 )
-import os, itertools
+import os, itertools, sys
 from fairseq.tasks import FairseqTask, register_task
 from fairseq.data import (
     ConcatDataset,
@@ -57,15 +57,16 @@ class NPMTModel(FairseqModel):
         parser.add_argument('--win-attn-type', type=str, metavar='STR', help='ori: original')
         parser.add_argument('--reset-lrate', action='store_true', help='True reset learning rate after reloading')
         parser.add_argument('--use-nnlm', action='store_true', help='True use a separated RNN')
-        parser.add_argument('--kwidth', type=int, metavar='N', help='Window width for reordering layer')
+        parser.add_argument('--window-size', type=int, metavar='N', help='Window size for reordering layer')
         parser.add_argument('--nenclayer', type=int, metavar='N', help='Number of bi-directional GRU encoder layers')
+        parser.add_argument('--ndeclayer', type=int, metavar='N', help='Number of GRU decoder layers')
         parser.add_argument('--nhid', type=int, metavar='N', help='Number of hidden units per encoder layer (bi-directional)')
         parser.add_argument('--dropout-src', type=float, metavar='D', help='dropout on source embeddings')
         parser.add_argument('--dropout-tgt', type=float, metavar='D', help='dropout on target embeddings')
         parser.add_argument('--dropout-out', type=float, metavar='D', help='dropout on decoder output')
         parser.add_argument('--dropout-hid', type=float, metavar='D', help='dropout between layers')
         parser.add_argument('--dropout', type=float, metavar='D', help='Overall dropout')
-        parser.add_argument('--batchsize', type=int, metavar='N', help='Batch Size')
+        # parser.add_argument('--batch-size', type=int, metavar='N', help='Batch Size')
         parser.add_argument('--optim', type=str, metavar='STR', help='Optimizer')
         # parser.add_argument('--lr', type=float, metavar='D', help='Learning Rate')
         parser.add_argument('--sourcelang', type=str, metavar='STR', help='Source Language')
@@ -107,20 +108,20 @@ class NPMTModel(FairseqModel):
             dictionary=task.source_dictionary,
             embed_dim=args.encoder_embed_dim,
             hidden_dim=args.encoder_hidden_dim,
-            dropout=args.encoder_dropout
+            dropout=args.npmt_dropout
         )
         decoder = SimpleLSTMDecoder(
             dictionary=task.target_dictionary,
             encoder_hidden_dim=args.encoder_hidden_dim,
             embed_dim=args.decoder_embed_dim,
             hidden_dim=args.decoder_hidden_dim,
-            dropout=args.decoder_dropout
+            dropout=args.npmt_dropout
         )
         model = cls(encoder, decoder)
 
         # Print the model architecture.
-        print(model)
-
+        # print(model)
+        # sys.exit()
         return model
 
 
@@ -152,15 +153,16 @@ def npmt_iwslt_de_en(args):
     args.win_attn_type = getattr(args, 'win_attn_type', 'ori')                      # ori: original
     args.reset_lrate = getattr(args, 'reset_lrate', False)                          # True reset learning rate after reloading
     args.use_nnlm = getattr(args, 'use_nnlm', False)                                # True use a separated RNN
-    args.kwidth = getattr(args, 'kwidth', 7)                                        # Window width for reordering layer
+    args.window_size = getattr(args, 'window_size', 7)                                        # Window width for reordering layer
     args.nenclayer = getattr(args, 'nenclayer', 2)                                  # Number of bi-directional GRU encoder layers
+    args.ndeclayer = getattr(args, 'ndeclayer', 2)                                  # Number of GRU deocder layers
     args.nhid = getattr(args, 'nhid', 256)                                          # Number of hidden units per encoder layer (bi-directional)
     args.dropout_src = getattr(args, 'dropout_src', 0)                              # dropout on source embeddings
     args.dropout_tgt = getattr(args, 'dropout_tgt', 0)                              # dropout on target embeddings
     args.dropout_out = getattr(args, 'dropout_out', 0)                              # dropout on decoder output
     args.dropout_hid = getattr(args, 'dropout_hid', 0)                              # dropout between layers
     args.dropout = getattr(args, 'dropout', 0.5)                                    # Overall dropout
-    args.batchsize = getattr(args, 'batchsize', 32)                                 # Batch Size
+    args.batch_size = getattr(args, 'batch_size', 32)                                 # Batch Size
     args.optim = getattr(args, 'optim', 'adam')                                     # Optimizer
     args.lr = getattr(args, 'lr', 0.001)                                            # Learning Rate
     args.sourcelang = getattr(args, 'sourcelang', 'de')                             # Source Language
@@ -170,7 +172,7 @@ def npmt_iwslt_de_en(args):
     args.encoder_embed_dim = getattr(args, 'encoder_embed_dim', 256)
     args.encoder_hidden_dim = getattr(args, 'encoder_hidden_dim', 256)
     args.decoder_embed_dim = getattr(args, 'decoder_embed_dim', 256)
-    args.decoder_hidden_dim = getattr(args, 'decoder_hidden_dim', 256)
+    args.decoder_hidden_dim = getattr(args, 'decoder_hidden_dim', 512)
     # args.encoder_dropout = getattr(args, 'encoder_dropout', 0.1)
 
 
@@ -267,7 +269,6 @@ class LoadDataset(FairseqTask):
 
                 if not combine:
                     break
-        print('here')
         assert len(src_datasets) == len(tgt_datasets)
 
         if len(src_datasets) == 1:

@@ -1,29 +1,34 @@
+import torch
 import torch.nn as nn
 from fairseq import utils
 from fairseq.models import FairseqEncoder
+from .SoftReordering import winAttn
 
 class SimpleLSTMEncoder(FairseqEncoder):
 
-    def __init__(
-        self, args, dictionary, embed_dim=128, hidden_dim=128, dropout=0.1,
-    ):
+    def __init__(self, args, dictionary, embed_dim=128, hidden_dim=128, dropout=0.1):
         super().__init__(dictionary)
         self.args = args
+        padding_idx=dictionary.pad()
+        print("Padding Index: ", padding_idx)
 
         # Our encoder will embed the inputs before feeding them to the LSTM.
         self.embed_tokens = nn.Embedding(
             num_embeddings=len(dictionary),
             embedding_dim=embed_dim,
-            padding_idx=dictionary.pad(),
+            padding_idx=padding_idx,
         )
         self.dropout = nn.Dropout(p=dropout)
 
+        self.reordering = winAttn(embed_dim, self.args.window_size, padding_idx)
+
         # We'll use a single-layer, unidirectional LSTM for simplicity.
-        self.lstm = nn.LSTM(
+        self.gru = nn.GRU(
             input_size=embed_dim,
             hidden_size=hidden_dim,
             num_layers=1,
             bidirectional=False,
+            batch_first=True
         )
 
     def forward(self, src_tokens, src_lengths):
@@ -47,15 +52,22 @@ class SimpleLSTMEncoder(FairseqEncoder):
 
         # Embed the source.
         x = self.embed_tokens(src_tokens)
+        # print("Source size: ", src_tokens.size())
+        # print("Input size: ", x.size())
 
+   
         # Apply dropout.
         x = self.dropout(x)
 
         # Pack the sequence into a PackedSequence object to feed to the LSTM.
-        x = nn.utils.rnn.pack_padded_sequence(x, src_lengths, batch_first=True)
+        # x = nn.utils.rnn.pack_padded_sequence(x, src_lengths, batch_first=True)
 
         # Get the output from the LSTM.
-        _outputs, (final_hidden, _final_cell) = self.lstm(x)
+        _outputs, final_hidden = self.gru(x)
+        print("Encoder output size: ", _outputs.size())
+        # print("Encoder hidden size: ", final_hidden.size())
+        # final_hidden = final_hidden[2, :, :] + final_hidden[3, :, :]
+        print("Encoder hidden size: ", final_hidden.size())
 
         # Return the Encoder's output. This can be any object and will be
         # passed directly to the Decoder.

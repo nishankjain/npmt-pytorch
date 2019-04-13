@@ -17,16 +17,28 @@ class SimpleLSTMDecoder(FairseqDecoder):
             embedding_dim=embed_dim,
             padding_idx=dictionary.pad(),
         )
+
         self.dropout = nn.Dropout(p=dropout)
 
         # We'll use a single-layer, unidirectional LSTM for simplicity.
-        self.lstm = nn.LSTM(
+        self.gru1 = nn.GRU(
             # For the first layer we'll concatenate the Encoder's final hidden
             # state with the embedded target tokens.
             input_size=encoder_hidden_dim + embed_dim,
             hidden_size=hidden_dim,
             num_layers=1,
             bidirectional=False,
+            batch_first=True
+        )
+
+        self.gru2 = nn.GRU(
+            # For the first layer we'll concatenate the Encoder's final hidden
+            # state with the embedded target tokens.
+            input_size=hidden_dim,
+            hidden_size=hidden_dim,
+            num_layers=1,
+            bidirectional=False,
+            batch_first=True
         )
 
         # Define the output projection.
@@ -62,6 +74,7 @@ class SimpleLSTMDecoder(FairseqDecoder):
 
         # Apply dropout.
         x = self.dropout(x)
+        print("Encoder hidden size: ", final_encoder_hidden.size(), x.size())
 
         # Concatenate the Encoder's final hidden state to *every* embedded
         # target token.
@@ -70,22 +83,25 @@ class SimpleLSTMDecoder(FairseqDecoder):
             dim=2,
         )
 
+        output1, hidden1 = self.gru1(x)
+        output, hidden = self.gru2(output1, hidden1)
+
         # Using PackedSequence objects in the Decoder is harder than in the
         # Encoder, since the targets are not sorted in descending length order,
         # which is a requirement of ``pack_padded_sequence()``. Instead we'll
         # feed nn.LSTM directly.
-        initial_state = (
-            final_encoder_hidden.unsqueeze(0),  # hidden
-            torch.zeros_like(final_encoder_hidden).unsqueeze(0),  # cell
-        )
-        output, _ = self.lstm(
-            x.transpose(0, 1),  # convert to shape `(tgt_len, bsz, dim)`
-            initial_state,
-        )
-        x = output.transpose(0, 1)  # convert to shape `(bsz, tgt_len, hidden)`
+        # initial_state = (
+        #     final_encoder_hidden.unsqueeze(0),  # hidden
+        #     torch.zeros_like(final_encoder_hidden).unsqueeze(0),  # cell
+        # )
+        # output, _ = self.gru(
+        #     x.transpose(0, 1),  # convert to shape `(tgt_len, bsz, dim)`
+        #     initial_state,
+        # )
+        # x = output.transpose(0, 1)  # convert to shape `(bsz, tgt_len, hidden)`
 
         # Project the outputs to the size of the vocabulary.
-        x = self.output_projection(x)
+        x = self.output_projection(output)
 
         # Return the logits and ``None`` for the attention weights
         return x, None
