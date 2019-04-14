@@ -28,6 +28,7 @@ class SoftReordering(nn.Module):
         super().__init__()
         self.padding_idx = padding_idx
         self.window_size = window_size
+        self.emb_dim = emb_dim
         self.winUnit = WinUnit(emb_dim, window_size)
         self.max_number_of_windows = 0
         self.win_unit_clones = []
@@ -43,7 +44,10 @@ class SoftReordering(nn.Module):
             # self.winUnit.clearState()
             for i in range(sequence_length - self.max_number_of_windows):
                 # self.win_unit_clones.append(self.winUnit)
-                self.win_unit_clones.append(copy.deepcopy(self.winUnit))
+                model_copy = type(self.winUnit)(self.emb_dim, self.window_size).cuda()
+                model_copy.load_state_dict(self.winUnit.state_dict())
+                # self.win_unit_clones.append(copy.deepcopy(self.winUnit))
+                self.win_unit_clones.append(model_copy)
             self.max_number_of_windows = sequence_length
         # for t in range(sequence_length):
         #     self.win_unit_clones[t].clearState()
