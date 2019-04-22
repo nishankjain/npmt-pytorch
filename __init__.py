@@ -253,7 +253,11 @@ class LSTMEncoder(FairseqEncoder):
         # unpack outputs and apply dropout
         x, _ = nn.utils.rnn.pad_packed_sequence(packed_outs, padding_value=self.padding_value)
         x = F.dropout(x, p=self.dropout_out, training=self.training)
-        assert list(x.size()) == [seqlen, bsz, self.output_units]
+        # assert list(x.size()) == [seqlen, bsz, self.output_units]
+        # print("X Size: ", x.size())
+        expected_sizes = [seqlen, bsz, self.output_units]
+        # print("Sizes: ", expected_sizes)
+        assert list(x.size()) == expected_sizes
 
         if self.bidirectional:
 
@@ -315,6 +319,7 @@ class LSTMDecoder(FairseqIncrementalDecoder):
             self.encoder_cell_proj = Linear(encoder_output_units, hidden_size)
         else:
             self.encoder_hidden_proj = self.encoder_cell_proj = None
+        print(self.encoder_hidden_proj)
         self.layers = nn.ModuleList([
             LSTMCell(
                 input_size=hidden_size + embed_dim if layer == 0 else hidden_size,

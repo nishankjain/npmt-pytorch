@@ -35,11 +35,17 @@ class SoftReordering(nn.Module):
 
     def forward(self, input):
         window_width = math.floor(self.window_size / 2)
-        self.window_size = window_width * 2 + 1
+        # self.window_size = window_width * 2 + 1
         padding = (0, 0, window_width, window_width) # adding left and right padding to dim 2
-        self.padded_input = F.pad(input, padding, "constant", self.padding_idx)
+        # print("Padding Index: ", self.padding_idx)
+        self.padded_input = F.pad(input, padding, "constant", 0)  # Changed padding from padding index to 0
+        # print("Original input size: ", input.size())
+        # print("Padded input size: ", self.padded_input.size())
+        # print(input[0, 0:5, :])
+        # print(self.padded_input[0, 0:5, :])
         
         sequence_length = input.size(1)
+        # print("Seq len: ", sequence_length)
         if self.max_number_of_windows < sequence_length:
             # self.winUnit.clearState()
             for i in range(sequence_length - self.max_number_of_windows):
@@ -51,12 +57,13 @@ class SoftReordering(nn.Module):
             self.max_number_of_windows = sequence_length
         # for t in range(sequence_length):
         #     self.win_unit_clones[t].clearState()
-        
+        # print("Max Windows: ", self.max_number_of_windows)
         self.output = torch.zeros(input.size()).cuda()
         for t in range(sequence_length):
             x = self.padded_input[:, t:t+self.window_size, :]
             ht = self.win_unit_clones[t](x)
             self.output[:, t, :] = ht
+            # print("Output Size: ", self.output.size())
         return self.output
     
     # def backward():
