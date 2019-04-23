@@ -9,7 +9,17 @@ from fairseq.models import (
     register_model_architecture,
 )
 
-
+import os, itertools, sys
+from fairseq.tasks import FairseqTask, register_task
+from fairseq.data import (
+    ConcatDataset,
+    data_utils,
+    Dictionary,
+    IndexedCachedDataset,
+    IndexedDataset,
+    IndexedRawTextDataset,
+    LanguagePairDataset
+)
 
 @register_model('npmt')
 class LSTMModel(FairseqModel):
