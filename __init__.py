@@ -432,7 +432,7 @@ class LSTMDecoder(FairseqIncrementalDecoder):
         x = x.transpose(1, 0)
 
         # srclen x tgtlen x bsz -> bsz x tgtlen x srclen
-        if not self.training and self.need_attn:
+        if not self.training or self.need_attn:
             attn_scores = attn_scores.transpose(0, 2)
         else:
             attn_scores = None
