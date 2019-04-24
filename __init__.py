@@ -220,7 +220,7 @@ class LSTMEncoder(FairseqEncoder):
         if bidirectional:
             self.output_units *= 2
         
-        self.reordering = SoftReordering(embed_dim, self.window_size, self.padding_idx)
+        # self.reordering = SoftReordering(embed_dim, self.window_size, self.padding_idx)
 
     def forward(self, src_tokens, src_lengths):
         if self.left_pad:
@@ -236,7 +236,7 @@ class LSTMEncoder(FairseqEncoder):
         # embed tokens
         x = self.embed_tokens(src_tokens)
         x = F.dropout(x, p=self.dropout_in, training=self.training)
-        x = self.reordering(x)
+        # x = self.reordering(x)
 
         # B x T x C -> T x B x C
         x = x.transpose(0, 1)
@@ -536,6 +536,7 @@ def base_architecture(args):
     args.decoder_hidden_size = getattr(args, 'decoder_hidden_size', args.decoder_embed_dim)
     args.decoder_layers = getattr(args, 'decoder_layers', 2)
     args.decoder_out_embed_dim = getattr(args, 'decoder_out_embed_dim', 512)
+    args.decoder_attention = getattr(args, 'decoder_attention', '1')
     args.decoder_dropout_in = getattr(args, 'decoder_dropout_in', args.dropout)
     args.decoder_dropout_out = getattr(args, 'decoder_dropout_out', args.dropout)
     args.share_decoder_input_output_embed = getattr(args, 'share_decoder_input_output_embed', False)

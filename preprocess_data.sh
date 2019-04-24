@@ -3,6 +3,9 @@
 #
 # Adapted from https://github.com/facebookresearch/MIXER/blob/master/prepareData.sh
 
+# Refer http://www.statmt.org/moses/?n=FactoredTraining.PrepareTraining
+# for training data preparation
+
 echo 'Cloning Moses github repository (for tokenization scripts)...'
 git clone https://github.com/moses-smt/mosesdecoder.git
 
@@ -11,7 +14,7 @@ git clone https://github.com/rsennrich/subword-nmt.git
 
 SCRIPTS=mosesdecoder/scripts
 TOKENIZER=$SCRIPTS/tokenizer/tokenizer.perl
-LC=$SCRIPTS/tokenizer/lowercase.perl
+LOWERCASE=$SCRIPTS/tokenizer/lowercase.perl
 CLEAN=$SCRIPTS/training/clean-corpus-n.perl
 BPEROOT=subword-nmt
 BPE_TOKENS=10000
@@ -58,48 +61,44 @@ for l in $src $tgt; do
 done
 perl $CLEAN -ratio 1.5 $tmp/train.tok $src $tgt $tmp/train.clean 1 175
 for l in $src $tgt; do
-    perl $LC < $tmp/train.clean.$l > $tmp/train.$l
+    perl $LOWERCASE < $tmp/train.clean.$l > $tmp/train_temp.$l
 done
 
 
-echo "pre-processing dev data..."
+echo "pre-processing test data..."
 for l in $src $tgt; do
     f=dev.$l
-    tok=dev.tok.$l
+    tok=test.tok.$l
 
     cat $orig/$lang/$f | \
     perl $TOKENIZER -threads 8 -l $l > $tmp/$tok
+    perl $LOWERCASE < $tmp/$tok > $tmp/test.$l
     echo ""
-done
-perl $CLEAN -ratio 1.5 $tmp/dev.tok $src $tgt $tmp/dev.clean 1 175
-for l in $src $tgt; do
-    perl $LC < $tmp/dev.clean.$l > $tmp/dev.$l
-    cp -r $tmp/dev.$l $prep/dev.$l
 done
 
 
 # NR = Number of records in the input file
-echo "creating train, test..."
+echo "creating train, valid data..."
 for l in $src $tgt; do
-    awk '{if (NR%23 == 0)  print $0; }' $tmp/train.$l > $prep/test.$l
-    awk '{if (NR%23 != 0)  print $0; }' $tmp/train.$l > $prep/train.$l
+    awk '{if (NR%23 == 0)  print $0; }' $tmp/train_temp.$l > $tmp/valid.$l
+    awk '{if (NR%23 != 0)  print $0; }' $tmp/train_temp.$l > $tmp/train.$l
 done
 
 
-# TRAIN=$tmp/train.en-de
-# BPE_CODE=$prep/code
-# rm -f $TRAIN
-# for l in $src $tgt; do
-#     cat $tmp/train.$l >> $TRAIN
-# done
+TRAIN=$tmp/train.en-de
+BPE_CODE=$prep/code
+rm -f $TRAIN
+for l in $src $tgt; do
+    cat $tmp/train.$l >> $TRAIN
+done
 
 
-# echo "learn_bpe.py on ${TRAIN}..."
-# python $BPEROOT/learn_bpe.py -s $BPE_TOKENS < $TRAIN > $BPE_CODE
+echo "learn_bpe.py on ${TRAIN}..."
+python $BPEROOT/learn_bpe.py -s $BPE_TOKENS < $TRAIN > $BPE_CODE
 
-# for L in $src $tgt; do
-#     for f in train.$L valid.$L test.$L; do
-#         echo "apply_bpe.py to ${f}..."
-#         python $BPEROOT/apply_bpe.py -c $BPE_CODE < $tmp/$f > $prep/$f
-#     done
-# done
+for L in $src $tgt; do
+    for f in train.$L valid.$L test.$L; do
+        echo "apply_bpe.py to ${f}..."
+        python $BPEROOT/apply_bpe.py -c $BPE_CODE < $tmp/$f > $prep/$f
+    done
+done
