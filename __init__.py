@@ -196,9 +196,9 @@ class LSTMEncoder(FairseqEncoder):
             eo.index_select(1, new_order)
             for eo in encoder_out['encoder_out']
         )
-        if encoder_out['encoder_padding_mask'] is not None:
-            encoder_out['encoder_padding_mask'] = \
-                encoder_out['encoder_padding_mask'].index_select(1, new_order)
+        # if encoder_out['encoder_padding_mask'] is not None:
+        #     encoder_out['encoder_padding_mask'] = \
+        #         encoder_out['encoder_padding_mask'].index_select(1, new_order)
         return encoder_out
 
     def max_positions(self):
