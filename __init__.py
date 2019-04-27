@@ -156,6 +156,7 @@ class LSTMEncoder(FairseqEncoder):
                 except NameError:
                     print("upload_best function is not defined")
                 else:
+                    print("upload_best function exists")
                     globals()['upload_best']()
         if os.path.isfile(filename_last):
             last_stamp = os.stat(filename_last).st_mtime
