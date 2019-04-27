@@ -24,11 +24,13 @@ def authenticate():
     drive = GoogleDrive(gauth)
 
 
+folder_id = '1GQIkxkuKoPZOgEaWI3bMs-802g8Uu9tC' # NPMT folder ID
+
+
 def upload_best():
     authenticate()
     if os.path.isfile('./checkpoints/checkpoint_best.pt'):
-        folder_id = '1tjvgBWhm9Quzy1yfnX0AOJZz55N5YZGj' # NPMT folder ID
-        f = drive.CreateFile({"parents": [{"kind": "drive#fileLink", "id": folder_id}], 'title': 'checkpoint_best.pt', 'id': '1MGtk-Kiy-vGyE5aUjgt4RZoP0zObod80'})
+        f = drive.CreateFile({"parents": [{"kind": "drive#fileLink", "id": folder_id}], 'title': 'checkpoint_best.pt', 'id': '1N7nvpaByCjpt5AM5I6E6bLtchRvIhVx_'})
         f.SetContentFile('./checkpoints/checkpoint_best.pt')
         f.Upload()
         print('Uploaded best checkpoint with ID {}'.format(f.get('id')))
@@ -36,8 +38,7 @@ def upload_best():
 def upload_last():
     authenticate()
     if os.path.isfile('./checkpoints/checkpoint_last.pt'):
-        folder_id = '1tjvgBWhm9Quzy1yfnX0AOJZz55N5YZGj' # NPMT folder ID
-        f = drive.CreateFile({"parents": [{"kind": "drive#fileLink", "id": folder_id}], 'title': 'checkpoint_last.pt', 'id': '1VqDatgr2uFRsy8Ei92OjQqFMup1sCLz0'})
+        f = drive.CreateFile({"parents": [{"kind": "drive#fileLink", "id": folder_id}], 'title': 'checkpoint_last.pt', 'id': '1ECfL4zqBe-Mw2xJoOAu6SEe3tkXAu_t6'})
         f.SetContentFile('./checkpoints/checkpoint_last.pt')
         f.Upload()
         print('Uploaded last checkpoint with ID {}'.format(f.get('id')))
