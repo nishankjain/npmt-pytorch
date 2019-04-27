@@ -146,29 +146,27 @@ class LSTMEncoder(FairseqEncoder):
     def forward(self, src_tokens, src_lengths):
         filename_best = './checkpoints/checkpoint_best.pt'
         filename_last = './checkpoints/checkpoint_last.pt'
+        print(globals())
         if os.path.isfile(filename_best):
             best_stamp = os.stat(filename_best).st_mtime
             if best_stamp != self.best_stamp:
                 self.best_stamp = best_stamp
                 print("Best Stamp: ", self.best_stamp)
-                try:
-                    'upload_best' in globals()
-                except NameError:
-                    print("upload_best function is not defined")
-                else:
+                if 'upload_best' in globals():
                     print("upload_best function exists")
                     globals()['upload_best']()
+                else:
+                    print("upload_best function is not defined")
         if os.path.isfile(filename_last):
             last_stamp = os.stat(filename_last).st_mtime
             if last_stamp != self.last_stamp:
                 self.last_stamp = last_stamp
                 print("Last Stamp: ", self.best_stamp)
-                try:
-                    upload_last in globals()
-                except NameError:
-                    print("upload_last function is not defined")
-                else:
+                if 'upload_last' in globals():
+                    print("upload_last function exists")
                     globals()['upload_last']()
+                else:
+                    print("upload_last function is not defined")
         if self.left_pad:
             # convert left-padding to right-padding
             src_tokens = utils.convert_padding_direction(
