@@ -3,3 +3,4 @@ mosesdecoder
 subword-nmt
 orig/de-en
 __pycache__
+checkpoints
