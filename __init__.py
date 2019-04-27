@@ -147,7 +147,6 @@ class LSTMEncoder(FairseqEncoder):
     def forward(self, src_tokens, src_lengths):
         filename_best = './checkpoints/checkpoint_best.pt'
         filename_last = './checkpoints/checkpoint_last.pt'
-        print(globals())
         if os.path.isfile(filename_best):
             best_stamp = os.stat(filename_best).st_mtime
             if best_stamp != self.best_stamp:
