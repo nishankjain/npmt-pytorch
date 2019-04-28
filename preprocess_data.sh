@@ -59,7 +59,7 @@ for l in $src $tgt; do
     perl $TOKENIZER -threads 8 -l $l > $tmp/$tok
     echo ""
 done
-perl $CLEAN -ratio 1 $tmp/train.tok $src $tgt $tmp/train.clean 1 175
+perl $CLEAN -ratio 1.5 $tmp/train.tok $src $tgt $tmp/train.clean 1 175
 for l in $src $tgt; do
     perl $LOWERCASE < $tmp/train.clean.$l > $tmp/train_temp.$l
 done
@@ -74,7 +74,7 @@ for l in $src $tgt; do
     perl $TOKENIZER -threads 8 -l $l > $tmp/$tok
     echo ""
 done
-perl $CLEAN -ratio 1 $tmp/test.tok $src $tgt $tmp/test.clean 1 175
+perl $CLEAN -ratio 1.5 $tmp/test.tok $src $tgt $tmp/test.clean 1 175
 for l in $src $tgt; do
     perl $LOWERCASE < $tmp/test.clean.$l > $tmp/test.$l
 done
