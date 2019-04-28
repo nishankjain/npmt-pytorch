@@ -29,7 +29,7 @@ from fairseq.data import (
 )
 
 from .SoftReordering import SoftReordering
-# from .upload import *
+from .upload import *
 
 
 @register_model('npmt')
@@ -145,20 +145,20 @@ class LSTMEncoder(FairseqEncoder):
         self.reordering = SoftReordering(embed_dim, self.reordering_window_size, self.padding_idx)
 
     def forward(self, src_tokens, src_lengths):
-        # filename_best = './checkpoints/checkpoint_best.pt'
-        # filename_last = './checkpoints/checkpoint_last.pt'
-        # if os.path.isfile(filename_best):
-        #     best_stamp = os.stat(filename_best).st_mtime
-        #     if best_stamp != self.best_stamp:
-        #         self.best_stamp = best_stamp
-        #         print("Best Stamp: ", self.best_stamp)
-        #         upload_best()
-        # if os.path.isfile(filename_last):
-        #     last_stamp = os.stat(filename_last).st_mtime
-        #     if last_stamp != self.last_stamp:
-        #         self.last_stamp = last_stamp
-        #         print("Last Stamp: ", self.best_stamp)
-        #         upload_last()
+        filename_best = './checkpoints/checkpoint_best.pt'
+        filename_last = './checkpoints/checkpoint_last.pt'
+        if os.path.isfile(filename_best):
+            best_stamp = os.stat(filename_best).st_mtime
+            if best_stamp != self.best_stamp:
+                self.best_stamp = best_stamp
+                print("Best Stamp: ", self.best_stamp)
+                upload_best()
+        if os.path.isfile(filename_last):
+            last_stamp = os.stat(filename_last).st_mtime
+            if last_stamp != self.last_stamp:
+                self.last_stamp = last_stamp
+                print("Last Stamp: ", self.best_stamp)
+                upload_last()
         if self.left_pad:
             # convert left-padding to right-padding
             src_tokens = utils.convert_padding_direction(
