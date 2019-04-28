@@ -97,9 +97,9 @@ def get_stats(file_path):
     # print('Lines with multiple sentences: {}'.format(lines_with_multiple_sentences))
 
 
-get_stats(base_path + 'valid.de')
-get_stats(base_path + 'valid.en')
+# get_stats(base_path + 'valid.de')
+# get_stats(base_path + 'valid.en')
 get_stats(base_path + 'train.de')
 get_stats(base_path + 'train.en')
-get_stats(base_path + 'test.de')
-get_stats(base_path + 'test.en')
+# get_stats(base_path + 'test.de')
+# get_stats(base_path + 'test.en')

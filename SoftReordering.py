@@ -105,13 +105,17 @@ class SoftReordering(nn.Module):
         # self.winUnit = WinUnit(emb_dim, window_size)
         # self.max_number_of_windows = 0
         self.win_unit_clones = nn.ModuleList([])
-        for i in range(92):
+        self.max_length = 92
+        for i in range(self.max_length):
             self.win_unit_clones.append(WinUnit(emb_dim, window_size))
             # self.win_unit_clones.append(copy.deepcopy(self.winUnit))
             # self.win_unit_clones[i].load_state_dict(self.winUnit.state_dict())
 
     def forward(self, input):
         sequence_length = input.size(1)
+        if sequence_length > self.max_length:
+            sequence_length = self.max_length
+        # print(sequence_length)
         # if self.max_number_of_windows < sequence_length:
             # for i in range(sequence_length - self.max_number_of_windows):
             #     self.win_unit_clones.append(copy.deepcopy(self.winUnit))
