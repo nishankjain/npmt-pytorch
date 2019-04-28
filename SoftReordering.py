@@ -104,8 +104,9 @@ class SoftReordering(nn.Module):
         self.emb_dim = emb_dim
         # self.winUnit = WinUnit(emb_dim, window_size)
         # self.max_number_of_windows = 0
+        self.max_seq_len = 246
         self.win_unit_clones = nn.ModuleList([])
-        for i in range(246):
+        for i in range(self.max_seq_len):
             self.win_unit_clones.append(WinUnit(emb_dim, window_size))
             # self.win_unit_clones.append(copy.deepcopy(self.winUnit))
             # self.win_unit_clones[i].load_state_dict(self.winUnit.state_dict())
@@ -124,6 +125,10 @@ class SoftReordering(nn.Module):
         self.padded_input = F.pad(input, padding, "constant", 0)
         
         self.output = torch.zeros(input.size()).cuda()
+
+        if sequence_length > self.max_seq_len:
+            raise Exception(f'Input length: {sequence_length} is more than {self.max_seq_len}, input: {input}')
+
         for t in range(sequence_length):
             x = self.padded_input[:, t:t+self.window_size, :]
             ht = self.win_unit_clones[t](x)
