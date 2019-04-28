@@ -104,7 +104,7 @@ class SoftReordering(nn.Module):
         self.emb_dim = emb_dim
         # self.winUnit = WinUnit(emb_dim, window_size)
         # self.max_number_of_windows = 0
-        self.max_seq_len = 246
+        self.max_seq_len = 247
         self.win_unit_clones = nn.ModuleList([])
         for i in range(self.max_seq_len):
             self.win_unit_clones.append(WinUnit(emb_dim, window_size))
