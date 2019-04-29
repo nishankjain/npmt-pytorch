@@ -75,33 +75,43 @@ for l in $src $tgt; do
     echo ""
 done
 perl $CLEAN -ratio 1.5 $tmp/test.tok $src $tgt $tmp/test.clean 1 50
+# for l in $src $tgt; do
+#     perl $LOWERCASE < $tmp/test.clean.$l > $tmp/test.$l
+# done
+
 for l in $src $tgt; do
-    perl $LOWERCASE < $tmp/test.clean.$l > $tmp/test.$l
+    perl $LOWERCASE < $tmp/test.clean.$l > $prep/test.$l
 done
 
 
 # NR = Number of records in the input file
+# echo "creating train, valid data..."
+# for l in $src $tgt; do
+#     awk '{if (NR%23 == 0)  print $0; }' $tmp/train_temp.$l > $tmp/valid.$l
+#     awk '{if (NR%23 != 0)  print $0; }' $tmp/train_temp.$l > $tmp/train.$l
+# done
+
 echo "creating train, valid data..."
 for l in $src $tgt; do
-    awk '{if (NR%23 == 0)  print $0; }' $tmp/train_temp.$l > $tmp/valid.$l
-    awk '{if (NR%23 != 0)  print $0; }' $tmp/train_temp.$l > $tmp/train.$l
+    awk '{if (NR%23 == 0)  print $0; }' $tmp/train_temp.$l > $prep/valid.$l
+    awk '{if (NR%23 != 0)  print $0; }' $tmp/train_temp.$l > $prep/train.$l
 done
 
 
-TRAIN=$tmp/train.en-de
-BPE_CODE=$prep/code
-rm -f $TRAIN
-for l in $src $tgt; do
-    cat $tmp/train.$l >> $TRAIN
-done
+# TRAIN=$tmp/train.en-de
+# BPE_CODE=$prep/code
+# rm -f $TRAIN
+# for l in $src $tgt; do
+#     cat $tmp/train.$l >> $TRAIN
+# done
 
 
-echo "learn_bpe.py on ${TRAIN}..."
-python $BPEROOT/learn_bpe.py -s $BPE_TOKENS < $TRAIN > $BPE_CODE
+# echo "learn_bpe.py on ${TRAIN}..."
+# python $BPEROOT/learn_bpe.py -s $BPE_TOKENS < $TRAIN > $BPE_CODE
 
-for L in $src $tgt; do
-    for f in train.$L valid.$L test.$L; do
-        echo "apply_bpe.py to ${f}..."
-        python $BPEROOT/apply_bpe.py -c $BPE_CODE < $tmp/$f > $prep/$f
-    done
-done
+# for L in $src $tgt; do
+#     for f in train.$L valid.$L test.$L; do
+#         echo "apply_bpe.py to ${f}..."
+#         python $BPEROOT/apply_bpe.py -c $BPE_CODE < $tmp/$f > $prep/$f
+#     done
+# done
