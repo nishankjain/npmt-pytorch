@@ -39,7 +39,7 @@ class SoftReordering(nn.Module):
         padding = (0, 0, window_width, window_width) # adding left and right padding to dim 2
         self.padded_input = F.pad(input, padding, "constant", 0)
         
-        self.output = torch.zeros(input.size()).cuda()
+        self.output = torch.zeros_like(input)
         for t in range(sequence_length):
             x = self.padded_input[:, t:t+self.window_size, :]
             ht = self.win_unit_clones[t](x)
