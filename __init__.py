@@ -29,61 +29,51 @@ from fairseq.data import (
 )
 
 from .SoftReordering import SoftReordering
-from .upload import *
+# from .upload import *
 
 
 @register_model('npmt')
-class LSTMModel(FairseqModel):
+class NPMT(FairseqModel):
     def __init__(self, encoder, decoder):
         super().__init__(encoder, decoder)
 
     @staticmethod
     def add_args(parser):
-        """Add model-specific arguments to the parser."""
-        # fmt: off
         parser.add_argument('--dropout', type=float, metavar='D',
                             help='dropout probability')
         parser.add_argument('--encoder-embed-dim', type=int, metavar='N',
                             help='encoder embedding dimension')
-        parser.add_argument('--encoder-embed-path', type=str, metavar='STR',
-                            help='path to pre-trained encoder embedding')
         parser.add_argument('--encoder-hidden-size', type=int, metavar='N',
                             help='encoder hidden size')
         parser.add_argument('--encoder-layers', type=int, metavar='N',
                             help='number of encoder layers')
         parser.add_argument('--encoder-bidirectional', action='store_true',
                             help='make all layers of encoder bidirectional')
+        parser.add_argument('--encoder-dropout-in', type=float, metavar='D',
+                            help='dropout probability for encoder input embedding')
+        parser.add_argument('--encoder-dropout-out', type=float, metavar='D',
+                            help='dropout probability for encoder output')
         parser.add_argument('--decoder-embed-dim', type=int, metavar='N',
                             help='decoder embedding dimension')
-        parser.add_argument('--decoder-embed-path', type=str, metavar='STR',
-                            help='path to pre-trained decoder embedding')
         parser.add_argument('--decoder-hidden-size', type=int, metavar='N',
                             help='decoder hidden size')
         parser.add_argument('--decoder-layers', type=int, metavar='N',
                             help='number of decoder layers')
         parser.add_argument('--decoder-out-embed-dim', type=int, metavar='N',
                             help='decoder output embedding dimension')
-
-        # Granular dropout settings (if not specified these default to --dropout)
-        parser.add_argument('--encoder-dropout-in', type=float, metavar='D',
-                            help='dropout probability for encoder input embedding')
-        parser.add_argument('--encoder-dropout-out', type=float, metavar='D',
-                            help='dropout probability for encoder output')
         parser.add_argument('--decoder-dropout-in', type=float, metavar='D',
                             help='dropout probability for decoder input embedding')
         parser.add_argument('--decoder-dropout-out', type=float, metavar='D',
                             help='dropout probability for decoder output')
+        parser.add_argument('--reordering-window-size', type=int, metavar='N',
+                            help='window size for reordering layer')
 
     @classmethod
     def build_model(cls, args, task):
-        """Build a new model instance."""
-        # make sure that all args are properly defaulted (in case there are any new ones)
-        base_architecture(args)
-
         if args.encoder_layers != args.decoder_layers:
             raise ValueError('--encoder-layers must match --decoder-layers')
 
-        encoder = LSTMEncoder(
+        encoder = Encoder(
             dictionary=task.source_dictionary,
             embed_dim=args.encoder_embed_dim,
             hidden_size=args.encoder_hidden_size,
@@ -93,7 +83,7 @@ class LSTMModel(FairseqModel):
             bidirectional=args.encoder_bidirectional,
             reordering_window_size=args.reordering_window_size
         )
-        decoder = LSTMDecoder(
+        decoder = Decoder(
             dictionary=task.target_dictionary,
             embed_dim=args.decoder_embed_dim,
             hidden_size=args.decoder_hidden_size,
@@ -106,12 +96,10 @@ class LSTMModel(FairseqModel):
         return cls(encoder, decoder)
 
 
-class LSTMEncoder(FairseqEncoder):
-    """LSTM encoder."""
+class Encoder(FairseqEncoder):
     def __init__(
-        self, dictionary, embed_dim=512, hidden_size=512, num_layers=1,
-        dropout_in=0.1, dropout_out=0.1, bidirectional=False,
-        left_pad=True, padding_value=0., reordering_window_size=7
+        self, dictionary, embed_dim, hidden_size, num_layers, dropout_in,
+        dropout_out, bidirectional, reordering_window_size
     ):
         super().__init__(dictionary)
         self.num_layers = num_layers
@@ -131,12 +119,9 @@ class LSTMEncoder(FairseqEncoder):
             input_size=embed_dim,
             hidden_size=hidden_size,
             num_layers=num_layers,
-            dropout=self.dropout_out if num_layers > 1 else 0.,
+            dropout=0,
             bidirectional=bidirectional
         )
-
-        self.left_pad = left_pad
-        self.padding_value = padding_value
 
         self.output_units = hidden_size
         if bidirectional:
@@ -160,18 +145,11 @@ class LSTMEncoder(FairseqEncoder):
                     self.last_stamp = last_stamp
                     print("Last Stamp: ", self.best_stamp)
                     upload_last()
-        if self.left_pad:
-            # convert left-padding to right-padding
-            src_tokens = utils.convert_padding_direction(
-                src_tokens,
-                self.padding_idx,
-                left_to_right=True,
-            )
 
         bsz, seqlen = src_tokens.size()
 
         # embed tokens
-        x = self.embed_tokens(src_tokens)
+        x = self.embed_tokens(src_tokens)   # bsz x seqlen x embed_dim
         x = F.dropout(x, p=self.dropout_in, training=self.training)
         x = self.reordering(x)
 
@@ -191,19 +169,12 @@ class LSTMEncoder(FairseqEncoder):
         packed_outs, (final_hiddens, final_cells) = self.lstm(packed_x, (h0, c0))
 
         # unpack outputs and apply dropout
-        x, _ = nn.utils.rnn.pad_packed_sequence(packed_outs, padding_value=self.padding_value)
+        x, _ = nn.utils.rnn.pad_packed_sequence(packed_outs, padding_value=0)
         x = F.dropout(x, p=self.dropout_out, training=self.training)
-        expected_sizes = [seqlen, bsz, self.output_units]
-        assert list(x.size()) == expected_sizes
 
         if self.bidirectional:
-
-            def combine_bidir(outs):
-                out = outs.view(self.num_layers, 2, bsz, -1).transpose(1, 2).contiguous()
-                return out.view(self.num_layers, bsz, -1)
-
-            final_hiddens = combine_bidir(final_hiddens)
-            final_cells = combine_bidir(final_cells)
+            final_hiddens = reshape_bidirectional_lstm_hiddens(final_hiddens, self.num_layers, bsz)
+            final_cells = reshape_bidirectional_lstm_hiddens(final_cells, self.num_layers, bsz)
 
         return {
             'encoder_out': (x, final_hiddens, final_cells)
@@ -220,11 +191,12 @@ class LSTMEncoder(FairseqEncoder):
         """Maximum input length supported by the encoder."""
         return int(1e5)  # an arbitrary large number
 
-class LSTMDecoder(FairseqDecoder):
+
+class Decoder(FairseqDecoder):
     """LSTM decoder."""
     def __init__(
-        self, dictionary, embed_dim=512, hidden_size=512, out_embed_dim=512,
-        num_layers=1, dropout_in=0.1, dropout_out=0.1, encoder_output_units=512
+        self, dictionary, embed_dim, hidden_size, out_embed_dim,
+        num_layers, dropout_in, dropout_out, encoder_output_units
     ):
         super().__init__(dictionary)
         self.dropout_in = dropout_in
@@ -358,8 +330,12 @@ def Linear(in_features, out_features, bias=True, dropout=0):
     return m
 
 
-@register_model_architecture('npmt', 'npmt')
-def base_architecture(args):
+def reshape_bidirectional_lstm_hiddens(outs, num_layers, bsz):
+    out = outs.view(num_layers, 2, bsz, -1).transpose(1, 2).contiguous()
+    return out.view(num_layers, bsz, -1)
+
+@register_model_architecture('npmt', 'npmt_iwslt_de_en')
+def npmt_iwslt_de_en(args):
     args.dropout = getattr(args, 'dropout', 0.5)
     args.encoder_embed_dim = getattr(args, 'encoder_embed_dim', 256)
     args.encoder_hidden_size = getattr(args, 'encoder_hidden_size', 256)
@@ -373,48 +349,18 @@ def base_architecture(args):
     args.decoder_out_embed_dim = getattr(args, 'decoder_out_embed_dim', 256)
     args.decoder_dropout_in = getattr(args, 'decoder_dropout_in', args.dropout)
     args.decoder_dropout_out = getattr(args, 'decoder_dropout_out', args.dropout)
-
-
-@register_model_architecture('npmt', 'npmt_iwslt_de_en')
-def lstm_wiseman_iwslt_de_en(args):
-    args.dropout = getattr(args, 'dropout', 0.5)
-    args.encoder_embed_dim = getattr(args, 'encoder_embed_dim', 256)
-    args.encoder_dropout_in = getattr(args, 'encoder_dropout_in', args.dropout)
-    args.encoder_dropout_out = getattr(args, 'encoder_dropout_out', 0)
-    args.decoder_embed_dim = getattr(args, 'decoder_embed_dim', 256)
-    args.decoder_out_embed_dim = getattr(args, 'decoder_out_embed_dim', 256)
-    args.decoder_dropout_in = getattr(args, 'decoder_dropout_in', args.dropout)
-    args.decoder_dropout_out = getattr(args, 'decoder_dropout_out', args.dropout)
     args.reordering_window_size = getattr(args, 'reordering_window_size', 7)
-    base_architecture(args)
 
 
 @register_task('load_dataset')
 class LoadDataset(FairseqTask):
     @staticmethod
     def add_args(parser):
-        """Add task-specific arguments to the parser."""
-        # fmt: off
-        parser.add_argument('data', nargs='+', help='path(s) to data directorie(s)')
+        parser.add_argument('data', nargs='+', help='path to data directory')
         parser.add_argument('-s', '--source-lang', metavar='SRC', default='de',
                             help='source language')
-        parser.add_argument('-t', '--target-lang', metavar='TARGET', default='en',
+        parser.add_argument('-t', '--target-lang', metavar='TGT', default='en',
                             help='target language')
-        parser.add_argument('--lazy-load', action='store_true',
-                            help='load the dataset lazily')
-        parser.add_argument('--raw-text', action='store_true',
-                            help='load raw text dataset')
-        parser.add_argument('--left-pad-source', default='True', type=str, metavar='BOOL',
-                            help='pad the source on the left')
-        parser.add_argument('--left-pad-target', default='False', type=str, metavar='BOOL',
-                            help='pad the target on the left')
-        parser.add_argument('--max-source-positions', type=int, metavar='N',
-                            help='max number of tokens in the source sequence')
-        parser.add_argument('--max-target-positions', type=int, metavar='N',
-                            help='max number of tokens in the target sequence')
-        parser.add_argument('--upsample-primary', type=int,
-                            help='amount to upsample primary dataset')
-        # fmt: on
 
     def __init__(self, args, src_dict, tgt_dict):
         super().__init__(args)
@@ -425,87 +371,53 @@ class LoadDataset(FairseqTask):
     def setup_task(cls, args, **kwargs):
         src_dict = cls.load_dictionary(os.path.join(args.data[0], 'dict.{}.txt'.format(args.source_lang)))
         tgt_dict = cls.load_dictionary(os.path.join(args.data[0], 'dict.{}.txt'.format(args.target_lang)))
-        assert src_dict.pad() == tgt_dict.pad()
-        assert src_dict.eos() == tgt_dict.eos()
-        assert src_dict.unk() == tgt_dict.unk()
-        print('| [{}] dictionary: {} types'.format(args.source_lang, len(src_dict)))
-        print('| [{}] dictionary: {} types'.format(args.target_lang, len(tgt_dict)))
+        """
+        src_dict[0] = <Lua heritage> = tgt_dict[0]
+        src_dict[1] = <pad> = tgt_dict[1]
+        src_dict[2] = </s> = tgt_dict[2]
+        src_dict[3] = <unk> = tgt_dict[3]
+        """
+        print('| dictionary [{}]: {} types'.format(args.source_lang, len(src_dict)))
+        print('| dictionary [{}]: {} types'.format(args.target_lang, len(tgt_dict)))
         return cls(args, src_dict, tgt_dict)
     
     def load_dataset(self, split, combine=False, **kwargs):
-        # Load a given dataset
-        def split_exists(split, src, tgt, lang, data_path):
-            filename = os.path.join(data_path, '{}.{}-{}.{}'.format(split, src, tgt, lang))
-            if self.args.raw_text and IndexedRawTextDataset.exists(filename):
-                return True
-            elif not self.args.raw_text and IndexedDataset.exists(filename):
-                return True
-            return False
-
-        def indexed_dataset(path, dictionary):
-            if self.args.raw_text:
-                return IndexedRawTextDataset(path, dictionary)
-            elif IndexedDataset.exists(path):
-                if self.args.lazy_load:
-                    return IndexedDataset(path, fix_lua_indexing=True)
-                else:
-                    return IndexedCachedDataset(path, fix_lua_indexing=True)
-            return None
+        src_dataset = None
+        tgt_dataset = None
         
-        src_datasets = []
-        tgt_datasets = []
-        data_paths = self.args.data
-        for dk, data_path in enumerate(data_paths):
-            print(dk, data_path)
-            for k in itertools.count():
-                split_k = split + (str(k) if k > 0 else '')
-                print("k: ", k)
-                # infer langcode
-                src, tgt = self.args.source_lang, self.args.target_lang
-                if split_exists(split_k, src, tgt, src, data_path):
-                    prefix = os.path.join(data_path, '{}.{}-{}.'.format(split_k, src, tgt))
-                    print("prefix",prefix)
-                elif split_exists(split_k, tgt, src, src, data_path):
-                    prefix = os.path.join(data_path, '{}.{}-{}.'.format(split_k, tgt, src))
-                    print("prefix2",prefix)
-                else:
-                    if k > 0 or dk > 0:
-                        break
-                    else:
-                        raise FileNotFoundError('Dataset not found: {} ({})'.format(split, data_path))
-
-                src_datasets.append(indexed_dataset(prefix + src, self.src_dict))
-                tgt_datasets.append(indexed_dataset(prefix + tgt, self.tgt_dict))
-
-                print('| {} {} {} {} examples'.format(k, data_path, split_k, len(src_datasets[-1])))
-
-                if not combine:
-                    break
-        assert len(src_datasets) == len(tgt_datasets)
-
-        if len(src_datasets) == 1:
-            src_dataset, tgt_dataset = src_datasets[0], tgt_datasets[0]
+        data_path = self.args.data[0]
+        
+        src, tgt = self.args.source_lang, self.args.target_lang
+        
+        src_file = os.path.join(data_path, '{}.{}-{}.{}'.format(split, src, tgt, src))
+        tgt_file = os.path.join(data_path, '{}.{}-{}.{}'.format(split, src, tgt, tgt))
+        
+        # Check for source file
+        if IndexedDataset.exists(src_file):
+            src_dataset = IndexedDataset(src_file, fix_lua_indexing=True)
+            print('| {} {} examples'.format(src_file, len(src_dataset)))
         else:
-            sample_ratios = [1] * len(src_datasets)
-            sample_ratios[0] = self.args.upsample_primary
-            src_dataset = ConcatDataset(src_datasets, sample_ratios)
-            tgt_dataset = ConcatDataset(tgt_datasets, sample_ratios)
+            raise FileNotFoundError('Source file not found: {}'.format(src_file))
+        
+        # Check for target file
+        if IndexedDataset.exists(tgt_file):
+            tgt_dataset = IndexedDataset(tgt_file, fix_lua_indexing=True)
+            print('| {} {} examples'.format(tgt_file, len(tgt_dataset)))
+        else:
+            raise FileNotFoundError('Target file not found: {}'.format(tgt_file))
+
+        # src_dataset.sizes - Array of numbers representing the no. of tokens in each src sequence
+        # tgt_dataset.sizes - Array of numbers representing the no. of tokens in each tgt sequence
 
         self.datasets[split] = LanguagePairDataset(
             src_dataset, src_dataset.sizes, self.src_dict,
-            tgt_dataset, tgt_dataset.sizes, self.tgt_dict,
-            left_pad_source=self.args.left_pad_source,
-            left_pad_target=self.args.left_pad_target,
-            max_source_positions=self.args.max_source_positions,
-            max_target_positions=self.args.max_target_positions,
+            tgt_dataset, tgt_dataset.sizes, self.tgt_dict
         )
     
     @property
     def source_dictionary(self):
-        """Return the source :class:`~fairseq.data.Dictionary`."""
         return self.src_dict
 
     @property
     def target_dictionary(self):
-        """Return the target :class:`~fairseq.data.Dictionary`."""
         return self.tgt_dict
