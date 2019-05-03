@@ -217,7 +217,6 @@ class NPMT_Decoder(FairseqDecoder):
         tgt_padding_idx = tgt_dictionary.pad()
         self.embed_tokens = Embedding(target_token_count, decoder_embed_dim, tgt_padding_idx)
 
-
         self.encoder_hidden_proj = None
         self.encoder_cell_proj = None
 
