@@ -82,7 +82,7 @@ def get_stats(file_path):
         sum_for_std_deviation += ((number_of_words_in_tweet - mean_num_words) ** 2)
     std_deviation = math.sqrt(sum_for_std_deviation / num_sentences)
 
-    # print('\n\nFile: {}'.format(file_path))
+    print('\n\nFile: {}'.format(file_path))
     # print('Total number of sentences: {}'.format(num_sentences))
     # print('Total number of words: {}'.format(total_num_words))
     # print('Average number of tokens: {}'.format(mean_num_words))
@@ -97,9 +97,10 @@ def get_stats(file_path):
     # print('Lines with multiple sentences: {}'.format(lines_with_multiple_sentences))
 
 
-get_stats(base_path + 'valid.de')
-get_stats(base_path + 'valid.en')
 get_stats(base_path + 'train.de')
 get_stats(base_path + 'train.en')
+get_stats(base_path + 'valid.de')
+get_stats(base_path + 'valid.en')
+get_stats(base_path + 'dev.de')
+get_stats(base_path + 'dev.en')
 get_stats(base_path + 'test.de')
-get_stats(base_path + 'test.en')
