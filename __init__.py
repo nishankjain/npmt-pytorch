@@ -186,6 +186,9 @@ class NPMT_Encoder(FairseqEncoder):
             final_hiddens = reshape_bidirectional_lstm_hiddens(final_hiddens, self.encoder_lstm_num_layers, bsz)
             final_cells = reshape_bidirectional_lstm_hiddens(final_cells, self.encoder_lstm_num_layers, bsz)
 
+        # print("X Size: ", x.size())
+        # print("Final Hidden Size: ", final_hiddens.size())
+        # print("Final Cell Size: ", final_cells.size())
         return {
             'encoder_out': (x, final_hiddens, final_cells)
         }
@@ -237,6 +240,7 @@ class NPMT_Decoder(FairseqDecoder):
         self.fc_out = Linear(decoder_out_embed_dim, target_token_count, dropout=decoder_lstm_out_dropout)
 
     def forward(self, prev_output_tokens, encoder_out_dict):
+        # print("Prev Output Tokens Size: ", prev_output_tokens[0])
         encoder_out = encoder_out_dict['encoder_out']
 
         bsz, seqlen = prev_output_tokens.size()

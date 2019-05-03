@@ -9,15 +9,15 @@
 echo 'Cloning Moses github repository (for tokenization scripts)...'
 git clone https://github.com/moses-smt/mosesdecoder.git
 
-# echo 'Cloning Subword NMT repository (for BPE pre-processing)...'
-# git clone https://github.com/rsennrich/subword-nmt.git
+echo 'Cloning Subword NMT repository (for BPE pre-processing)...'
+git clone https://github.com/rsennrich/subword-nmt.git
 
 SCRIPTS=mosesdecoder/scripts
 TOKENIZER=$SCRIPTS/tokenizer/tokenizer.perl
 LOWERCASE=$SCRIPTS/tokenizer/lowercase.perl
 CLEAN=$SCRIPTS/training/clean-corpus-n.perl
-# BPEROOT=subword-nmt
-# BPE_TOKENS=10000
+BPEROOT=subword-nmt
+BPE_TOKENS=10000
 
 ZIP_TRAIN_VAL=iwslt16_en_de.zip
 ZIP_TEST=iwslt16_en_de_test.zip
@@ -30,11 +30,12 @@ fi
 src=de
 tgt=en
 lang=de-en
-prep=iwslt16.tokenized.de-en
+prep=iwslt16.tokenized.de-en_tokenized
+final=iwslt16.tokenized.de-en
 tmp=$prep/tmp
 orig=orig
 
-mkdir -p $tmp $prep
+mkdir -p $tmp $prep $final
 
 cd $orig
 
@@ -117,22 +118,31 @@ for l in $src $tgt; do
     awk '{if (NR%23 == 0)  print $0; }' $tmp/train_temp.$l > $prep/valid.$l
     awk '{if (NR%23 != 0)  print $0; }' $tmp/train_temp.$l > $prep/train.$l
 done
+echo ""
 
 
-# TRAIN=$tmp/train.en-de
-# BPE_CODE=$prep/code
-# rm -f $TRAIN
-# for l in $src $tgt; do
-#     cat $tmp/train.$l >> $TRAIN
-# done
+TRAIN=$tmp/train.en-de
+BPE_CODE=$prep/code
+rm -f $TRAIN
+for l in $src $tgt; do
+    cat $prep/train.$l >> $TRAIN
+done
 
 
-# echo "learn_bpe.py on ${TRAIN}..."
-# python $BPEROOT/learn_bpe.py -s $BPE_TOKENS < $TRAIN > $BPE_CODE
+echo "learn_bpe.py on ${TRAIN}..."
+python $BPEROOT/learn_bpe.py -s $BPE_TOKENS < $TRAIN > $BPE_CODE
 
-# for L in $src $tgt; do
-#     for f in train.$L valid.$L test.$L; do
-#         echo "apply_bpe.py to ${f}..."
-#         python $BPEROOT/apply_bpe.py -c $BPE_CODE < $tmp/$f > $prep/$f
-#     done
-# done
+for L in $src $tgt; do
+    for f in train.$L valid.$L dev.$L; do
+        echo "apply_bpe.py to ${f}..."
+        python $BPEROOT/apply_bpe.py -c $BPE_CODE < $prep/$f > $final/$f
+    done
+done
+
+
+for L in $src; do
+    for f in test.$L; do
+        echo "apply_bpe.py to ${f}..."
+        python $BPEROOT/apply_bpe.py -c $BPE_CODE < $prep/$f > $final/$f
+    done
+done

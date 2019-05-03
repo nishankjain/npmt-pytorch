@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import copy, math
-import torch.autograd as autograd
 
 class WinUnit(nn.Module):
     def __init__(self, emb_dim, window_size):
