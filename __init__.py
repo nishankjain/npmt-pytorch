@@ -43,8 +43,10 @@ class NPMT(FairseqModel):
                             help='dropout probability')
         parser.add_argument('--encoder-embed-dim', type=int, metavar='N',
                             help='encoder embedding dimension')
-        parser.add_argument('--encoder-hidden-size', type=int, metavar='N',
-                            help='encoder hidden size')
+        parser.add_argument('--reordering-window-size', type=int, metavar='N',
+                            help='window size for reordering layer')
+        parser.add_argument('--encoder-lstm-hidden-size', type=int, metavar='N',
+                            help='encoder lstm hidden size')
         parser.add_argument('--encoder-layers', type=int, metavar='N',
                             help='number of encoder layers')
         parser.add_argument('--encoder-bidirectional', action='store_true',
@@ -65,71 +67,71 @@ class NPMT(FairseqModel):
                             help='dropout probability for decoder input embedding')
         parser.add_argument('--decoder-dropout-out', type=float, metavar='D',
                             help='dropout probability for decoder output')
-        parser.add_argument('--reordering-window-size', type=int, metavar='N',
-                            help='window size for reordering layer')
 
     @classmethod
     def build_model(cls, args, task):
         if args.encoder_layers != args.decoder_layers:
             raise ValueError('--encoder-layers must match --decoder-layers')
 
-        encoder = Encoder(
-            dictionary=task.source_dictionary,
-            embed_dim=args.encoder_embed_dim,
-            hidden_size=args.encoder_hidden_size,
-            num_layers=args.encoder_layers,
-            dropout_in=args.encoder_dropout_in,
-            dropout_out=args.encoder_dropout_out,
-            bidirectional=args.encoder_bidirectional,
-            reordering_window_size=args.reordering_window_size
+        npmt_encoder = NPMT_Encoder(
+            src_dictionary = task.source_dictionary,
+            encoder_embed_dim = args.encoder_embed_dim,
+            reordering_window_size = args.reordering_window_size,
+            encoder_lstm_hidden_size = args.encoder_lstm_hidden_size,
+            encoder_lstm_num_layers = args.encoder_layers,
+            encoder_embed_dropout = args.encoder_dropout_in,
+            encoder_lstm_out_dropout = args.encoder_dropout_out,
+            encoder_lstm_bidirectional = args.encoder_bidirectional
         )
-        decoder = Decoder(
-            dictionary=task.target_dictionary,
-            embed_dim=args.decoder_embed_dim,
-            hidden_size=args.decoder_hidden_size,
-            out_embed_dim=args.decoder_out_embed_dim,
-            num_layers=args.decoder_layers,
-            dropout_in=args.decoder_dropout_in,
-            dropout_out=args.decoder_dropout_out,
-            encoder_output_units=encoder.output_units
+
+        npmt_decoder = NPMT_Decoder(
+            tgt_dictionary = task.target_dictionary,
+            decoder_embed_dim = args.decoder_embed_dim,
+            decoder_lstm_hidden_size = args.decoder_hidden_size,
+            decoder_out_embed_dim = args.decoder_out_embed_dim,
+            decoder_lstm_num_layers = args.decoder_layers,
+            decoder_embed_dropout = args.decoder_dropout_in,
+            decoder_lstm_out_dropout = args.decoder_dropout_out,
+            encoder_output_units = npmt_encoder.output_units
         )
-        return cls(encoder, decoder)
+        return cls(npmt_encoder, npmt_decoder)
 
 
-class Encoder(FairseqEncoder):
+class NPMT_Encoder(FairseqEncoder):
     def __init__(
-        self, dictionary, embed_dim, hidden_size, num_layers, dropout_in,
-        dropout_out, bidirectional, reordering_window_size
+        self, src_dictionary, encoder_embed_dim, encoder_lstm_hidden_size, encoder_lstm_num_layers, encoder_embed_dropout,
+        encoder_lstm_out_dropout, encoder_lstm_bidirectional, reordering_window_size
     ):
-        super().__init__(dictionary)
-        self.num_layers = num_layers
-        self.dropout_in = dropout_in
-        self.dropout_out = dropout_out
-        self.bidirectional = bidirectional
-        self.hidden_size = hidden_size
+        super().__init__(src_dictionary)
+        self.encoder_lstm_num_layers = encoder_lstm_num_layers
+        self.encoder_embed_dropout = encoder_embed_dropout
+        self.encoder_lstm_out_dropout = encoder_lstm_out_dropout
+        self.encoder_lstm_bidirectional = encoder_lstm_bidirectional
+        self.encoder_lstm_hidden_size = encoder_lstm_hidden_size
         self.reordering_window_size = reordering_window_size
         self.best_stamp = 0
         self.last_stamp = 0
 
-        num_embeddings = len(dictionary)
-        self.padding_idx = dictionary.pad()
-        self.embed_tokens = Embedding(num_embeddings, embed_dim, self.padding_idx)
+        source_token_count = len(src_dictionary)
+        self.src_padding_idx = src_dictionary.pad()
+        self.embed_tokens = Embedding(source_token_count, encoder_embed_dim, self.src_padding_idx)
 
         self.lstm = LSTM(
-            input_size=embed_dim,
-            hidden_size=hidden_size,
-            num_layers=num_layers,
+            input_size=encoder_embed_dim,
+            hidden_size=encoder_lstm_hidden_size,
+            num_layers=encoder_lstm_num_layers,
             dropout=0,
-            bidirectional=bidirectional
+            bidirectional=encoder_lstm_bidirectional
         )
 
-        self.output_units = hidden_size
-        if bidirectional:
+        self.output_units = encoder_lstm_hidden_size
+        if encoder_lstm_bidirectional:
             self.output_units *= 2
         
-        self.reordering = SoftReordering(embed_dim, self.reordering_window_size)
+        self.reordering = SoftReordering(encoder_embed_dim, self.reordering_window_size)
 
     def forward(self, src_tokens, src_lengths):
+        # Code for saving the checkpoints from Colab to Google Drive
         if self.training:
             filename_best = './checkpoints/checkpoint_best.pt'
             filename_last = './checkpoints/checkpoint_last.pt'
@@ -148,33 +150,41 @@ class Encoder(FairseqEncoder):
 
         bsz, seqlen = src_tokens.size()
 
-        # embed tokens
+        # Apply embedding layer to sequences
         x = self.embed_tokens(src_tokens)   # bsz x seqlen x embed_dim
-        x = F.dropout(x, p=self.dropout_in, training=self.training)
+        
+        # Apply input dropout
+        x = F.dropout(x, p=self.encoder_embed_dropout, training=self.training)
+        
+        # Apply Soft Reordering
         x = self.reordering(x)
 
-        # B x T x C -> T x B x C
+        # Transpose input from bsz x seqlen x embed_dim to seqlen x bsz x embed_dim
+        # for packing and unpacking the input through LSTM layers
         x = x.transpose(0, 1)
 
-        # pack embedded source tokens into a PackedSequence
-        packed_x = nn.utils.rnn.pack_padded_sequence(x, src_lengths.data.tolist())
+        # Pack input into a Packed Sequence
+        packed_inputs = nn.utils.rnn.pack_padded_sequence(x, src_lengths.data.tolist())
 
-        # apply LSTM
-        if self.bidirectional:
-            state_size = 2 * self.num_layers, bsz, self.hidden_size
+        # Apply LSTM layers to the packed input
+        if self.encoder_lstm_bidirectional:
+            state_size = 2 * self.encoder_lstm_num_layers, bsz, self.encoder_lstm_hidden_size
         else:
-            state_size = self.num_layers, bsz, self.hidden_size
+            state_size = self.encoder_lstm_num_layers, bsz, self.encoder_lstm_hidden_size
         h0 = x.new_zeros(*state_size)
         c0 = x.new_zeros(*state_size)
-        packed_outs, (final_hiddens, final_cells) = self.lstm(packed_x, (h0, c0))
+        packed_outputs, (final_hiddens, final_cells) = self.lstm(packed_inputs, (h0, c0))
 
-        # unpack outputs and apply dropout
-        x, _ = nn.utils.rnn.pad_packed_sequence(packed_outs, padding_value=0)
-        x = F.dropout(x, p=self.dropout_out, training=self.training)
+        # Unpack LSTM outputs
+        x, _ = nn.utils.rnn.pad_packed_sequence(packed_outputs, padding_value=0)
+        
+        # Apply output dropout
+        x = F.dropout(x, p=self.encoder_lstm_out_dropout, training=self.training)
 
-        if self.bidirectional:
-            final_hiddens = reshape_bidirectional_lstm_hiddens(final_hiddens, self.num_layers, bsz)
-            final_cells = reshape_bidirectional_lstm_hiddens(final_cells, self.num_layers, bsz)
+        # Combine the bidirectional hidden states and cell states into unidirectional states
+        if self.encoder_lstm_bidirectional:
+            final_hiddens = reshape_bidirectional_lstm_hiddens(final_hiddens, self.encoder_lstm_num_layers, bsz)
+            final_cells = reshape_bidirectional_lstm_hiddens(final_cells, self.encoder_lstm_num_layers, bsz)
 
         return {
             'encoder_out': (x, final_hiddens, final_cells)
@@ -192,39 +202,40 @@ class Encoder(FairseqEncoder):
         return int(1e5)  # an arbitrary large number
 
 
-class Decoder(FairseqDecoder):
-    """LSTM decoder."""
+class NPMT_Decoder(FairseqDecoder):
     def __init__(
-        self, dictionary, embed_dim, hidden_size, out_embed_dim,
-        num_layers, dropout_in, dropout_out, encoder_output_units
+        self, tgt_dictionary, decoder_embed_dim, decoder_lstm_hidden_size, decoder_out_embed_dim,
+        decoder_lstm_num_layers, decoder_embed_dropout, decoder_lstm_out_dropout, encoder_output_units
     ):
-        super().__init__(dictionary)
-        self.dropout_in = dropout_in
-        self.dropout_out = dropout_out
-        self.hidden_size = hidden_size
+        super().__init__(tgt_dictionary)
+        self.decoder_embed_dropout = decoder_embed_dropout
+        self.decoder_lstm_out_dropout = decoder_lstm_out_dropout
+        self.decoder_lstm_num_layers = decoder_lstm_num_layers
+        self.decoder_lstm_hidden_size = decoder_lstm_hidden_size
 
-        num_embeddings = len(dictionary)
-        padding_idx = dictionary.pad()
-        self.embed_tokens = Embedding(num_embeddings, embed_dim, padding_idx)
+        target_token_count = len(tgt_dictionary)
+        tgt_padding_idx = tgt_dictionary.pad()
+        self.embed_tokens = Embedding(target_token_count, decoder_embed_dim, tgt_padding_idx)
 
-        self.encoder_output_units = encoder_output_units
-        if encoder_output_units != hidden_size:
-            self.encoder_hidden_proj = Linear(encoder_output_units, hidden_size)
-            self.encoder_cell_proj = Linear(encoder_output_units, hidden_size)
-        else:
-            self.encoder_hidden_proj = self.encoder_cell_proj = None
+
+        self.encoder_hidden_proj = None
+        self.encoder_cell_proj = None
+
+        if encoder_output_units != decoder_lstm_hidden_size:
+            self.encoder_hidden_proj = Linear(encoder_output_units, decoder_lstm_hidden_size)
+            self.encoder_cell_proj = Linear(encoder_output_units, decoder_lstm_hidden_size)
         
         self.layers = nn.ModuleList([
             LSTMCell(
-                input_size=hidden_size + embed_dim if layer == 0 else hidden_size,
-                hidden_size=hidden_size,
+                input_size=decoder_lstm_hidden_size + decoder_embed_dim if layer == 0 else decoder_lstm_hidden_size,
+                hidden_size=decoder_lstm_hidden_size,
             )
-            for layer in range(num_layers)
+            for layer in range(self.decoder_lstm_num_layers)
         ])
         
-        if hidden_size != out_embed_dim:
-            self.additional_fc = Linear(hidden_size, out_embed_dim)
-        self.fc_out = Linear(out_embed_dim, num_embeddings, dropout=dropout_out)
+        if decoder_lstm_hidden_size != decoder_out_embed_dim:
+            self.additional_fc = Linear(decoder_lstm_hidden_size, decoder_out_embed_dim)
+        self.fc_out = Linear(decoder_out_embed_dim, target_token_count, dropout=decoder_lstm_out_dropout)
 
     def forward(self, prev_output_tokens, encoder_out_dict):
         encoder_out = encoder_out_dict['encoder_out']
@@ -237,19 +248,18 @@ class Decoder(FairseqDecoder):
 
         # embed tokens
         x = self.embed_tokens(prev_output_tokens)
-        x = F.dropout(x, p=self.dropout_in, training=self.training)
+        x = F.dropout(x, p=self.decoder_embed_dropout, training=self.training)
 
         # B x T x C -> T x B x C
         x = x.transpose(0, 1)
 
         # initialize previous states
-        num_layers = len(self.layers)
-        prev_hiddens = [encoder_hiddens[i] for i in range(num_layers)]
-        prev_cells = [encoder_cells[i] for i in range(num_layers)]
+        prev_hiddens = [encoder_hiddens[i] for i in range(self.decoder_lstm_num_layers)]
+        prev_cells = [encoder_cells[i] for i in range(self.decoder_lstm_num_layers)]
         if self.encoder_hidden_proj is not None:
             prev_hiddens = [self.encoder_hidden_proj(x) for x in prev_hiddens]
             prev_cells = [self.encoder_cell_proj(x) for x in prev_cells]
-        input_feed = x.new_zeros(bsz, self.hidden_size)
+        input_feed = x.new_zeros(bsz, self.decoder_lstm_hidden_size)
 
         outs = []
         for j in range(seqlen):
@@ -261,14 +271,14 @@ class Decoder(FairseqDecoder):
                 hidden, cell = rnn(input, (prev_hiddens[i], prev_cells[i]))
 
                 # hidden state becomes the input to the next layer
-                input = F.dropout(hidden, p=self.dropout_out, training=self.training)
+                input = F.dropout(hidden, p=self.decoder_lstm_out_dropout, training=self.training)
 
                 # save state for next time step
                 prev_hiddens[i] = hidden
                 prev_cells[i] = cell
 
             out = hidden
-            out = F.dropout(out, p=self.dropout_out, training=self.training)
+            out = F.dropout(out, p=self.decoder_lstm_out_dropout, training=self.training)
 
             # input feeding
             input_feed = out
@@ -277,7 +287,7 @@ class Decoder(FairseqDecoder):
             outs.append(out)
 
         # collect outputs across time steps
-        x = torch.cat(outs, dim=0).view(seqlen, bsz, self.hidden_size)
+        x = torch.cat(outs, dim=0).view(seqlen, bsz, self.decoder_lstm_hidden_size)
 
         # T x B x C -> B x T x C
         x = x.transpose(1, 0)
@@ -287,7 +297,7 @@ class Decoder(FairseqDecoder):
         # project back to size of vocabulary
         if hasattr(self, 'additional_fc'):
             x = self.additional_fc(x)
-            x = F.dropout(x, p=self.dropout_out, training=self.training)
+            x = F.dropout(x, p=self.decoder_lstm_out_dropout, training=self.training)
         x = self.fc_out(x)
         
         # return x
@@ -334,11 +344,13 @@ def reshape_bidirectional_lstm_hiddens(outs, num_layers, bsz):
     out = outs.view(num_layers, 2, bsz, -1).transpose(1, 2).contiguous()
     return out.view(num_layers, bsz, -1)
 
+
 @register_model_architecture('npmt', 'npmt_iwslt_de_en')
 def npmt_iwslt_de_en(args):
     args.dropout = getattr(args, 'dropout', 0.5)
     args.encoder_embed_dim = getattr(args, 'encoder_embed_dim', 256)
-    args.encoder_hidden_size = getattr(args, 'encoder_hidden_size', 256)
+    args.reordering_window_size = getattr(args, 'reordering_window_size', 7)
+    args.encoder_lstm_hidden_size = getattr(args, 'encoder_lstm_hidden_size', 256)
     args.encoder_layers = getattr(args, 'encoder_layers', 2)
     args.encoder_bidirectional = getattr(args, 'encoder_bidirectional', True)
     args.encoder_dropout_in = getattr(args, 'encoder_dropout_in', args.dropout)
@@ -349,7 +361,6 @@ def npmt_iwslt_de_en(args):
     args.decoder_out_embed_dim = getattr(args, 'decoder_out_embed_dim', 256)
     args.decoder_dropout_in = getattr(args, 'decoder_dropout_in', args.dropout)
     args.decoder_dropout_out = getattr(args, 'decoder_dropout_out', args.dropout)
-    args.reordering_window_size = getattr(args, 'reordering_window_size', 7)
 
 
 @register_task('load_dataset')

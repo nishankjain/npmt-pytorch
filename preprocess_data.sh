@@ -9,17 +9,18 @@
 echo 'Cloning Moses github repository (for tokenization scripts)...'
 git clone https://github.com/moses-smt/mosesdecoder.git
 
-echo 'Cloning Subword NMT repository (for BPE pre-processing)...'
-git clone https://github.com/rsennrich/subword-nmt.git
+# echo 'Cloning Subword NMT repository (for BPE pre-processing)...'
+# git clone https://github.com/rsennrich/subword-nmt.git
 
 SCRIPTS=mosesdecoder/scripts
 TOKENIZER=$SCRIPTS/tokenizer/tokenizer.perl
 LOWERCASE=$SCRIPTS/tokenizer/lowercase.perl
 CLEAN=$SCRIPTS/training/clean-corpus-n.perl
-BPEROOT=subword-nmt
-BPE_TOKENS=10000
+# BPEROOT=subword-nmt
+# BPE_TOKENS=10000
 
-ZIP=iwslt16_en_de.zip
+ZIP_TRAIN_VAL=iwslt16_en_de.zip
+ZIP_TEST=iwslt16_en_de_test.zip
 
 if [ ! -d "$SCRIPTS" ]; then
     echo "Please set SCRIPTS variable correctly to point to Moses scripts."
@@ -37,16 +38,26 @@ mkdir -p $tmp $prep
 
 cd $orig
 
-if [ -f $ZIP ]; then
-    echo "Data present."
+if [ -f $ZIP_TRAIN_VAL ]; then
+    echo "Train and Val data present."
 else
-    echo "Data not present."
+    echo "Train and Val data not present."
     exit
 fi
 
+
+if [ -f $ZIP_TEST ]; then
+    echo "Test data present."
+else
+    echo "Test data not present."
+    exit
+fi
+
+
 echo "Unzipping data..."
 
-unzip $ZIP -d $lang
+unzip $ZIP_TRAIN_VAL -d $lang
+unzip $ZIP_TEST -d $lang
 cd ..
 
 
@@ -59,29 +70,39 @@ for l in $src $tgt; do
     perl $TOKENIZER -threads 8 -l $l > $tmp/$tok
     echo ""
 done
-perl $CLEAN -ratio 1.5 $tmp/train.tok $src $tgt $tmp/train.clean 1 50
+perl $CLEAN -ratio 1.5 $tmp/train.tok $src $tgt $tmp/train_temp 1 50
+
+
+echo "pre-processing dev data..."
 for l in $src $tgt; do
-    perl $LOWERCASE < $tmp/train.clean.$l > $tmp/train_temp.$l
+    f=dev.$l
+    # tok=valid.tok.$l
+
+    cat $orig/$lang/$f | \
+    perl $TOKENIZER -threads 8 -l $l > $prep/$f
+    echo ""
 done
 
 
 echo "pre-processing test data..."
-for l in $src $tgt; do
-    f=dev.$l
-    tok=test.tok.$l
+for l in $src; do
+    f=test.$l
+    # tok=test.tok.$l
 
     cat $orig/$lang/$f | \
-    perl $TOKENIZER -threads 8 -l $l > $tmp/$tok
+    perl $TOKENIZER -threads 8 -l $l > $prep/$f
     echo ""
 done
-perl $CLEAN -ratio 1.5 $tmp/test.tok $src $tgt $tmp/test.clean 1 50
+
+
+# perl $CLEAN -ratio 1.5 $tmp/test.tok $src $tgt $tmp/test.clean 1 50
 # for l in $src $tgt; do
 #     perl $LOWERCASE < $tmp/test.clean.$l > $tmp/test.$l
 # done
 
-for l in $src $tgt; do
-    perl $LOWERCASE < $tmp/test.clean.$l > $prep/test.$l
-done
+# for l in $src $tgt; do
+#     perl $LOWERCASE < $tmp/test.clean.$l > $prep/test.$l
+# done
 
 
 # NR = Number of records in the input file

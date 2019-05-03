@@ -42,7 +42,7 @@ class SoftReordering(nn.Module):
         self.output = torch.zeros_like(input)
         for t in range(sequence_length):
             x = self.padded_input[:, t:t+self.window_size, :]
-            ht = self.win_unit_clones[t](x)
+            ht = self.win_unit_clones[t % self.max_length](x)
             self.output[:, t, :] = ht
         
         # print("Unit 1")
