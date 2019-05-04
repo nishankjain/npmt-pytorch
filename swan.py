@@ -62,3 +62,33 @@ class SWAN(nn.Module):
         encoder_batch_size = encoder_outs.size(1)
         self.logpy = torch.Tensor(encoder_batch_size, T1, T2+1, self.batch_max_segment_len+1).fill_(-float('Inf')).cuda()
         start_vector = prev_output_tokens.new(encoder_batch_size, 1).fill_(self.start_symbol)
+
+        schedule = []
+        for t in range(T1):
+            jstart_l, jstart_u = self.get_jstart_range(t, T1, T2, T2)
+            for j_start in range(jstart_l, jstart_u+1):
+                j_len = math.min(self.batch_max_segment_len, T2-j_start+1)
+                j_end = j_start + j_len - 1
+                schedule.append([t, j_start, j_len, j_end])
+        schedule = torch.Tensor(schedule).cuda()
+        sorted_schedule = torch.sort(schedule, dim=2)
+        self.sorted_schedule = sorted_schedule
+
+        self.group_size = math.max(self.group_size, encoder_batch_size)
+
+        concat_inputs = torch.Tensor(self.group_size, self.batch_max_segment_len + 1).cuda()
+        concat_hts = torch.Tensor(self.group_size, self.decoder_lstm_hidden_size)
+
+        si = 0
+        counts = len(self.sorted_schedule)
+        while si < len(self.sorted_schedule):
+            si_next = math.min(si + math.floor(self.group_size / encoder_batch_size) - 1, counts)
+            s = si_next - si + 1
+            max_jlen = sorted_schedule[si_next][2]
+            t_concatInputs = concat_inputs[:s * encoder_batch_size - 1, :max_jlen]
+            t_concatHts = concat_hts[:s * encoder_batch_size - 1, :]
+            t_concatInputs.fill_(self.end_segment_symbol)
+            t_concatHts.fill_(0)
+    
+    def get_jstart_range(self, t, T1, minT2, maxT2):
+        return math.max(1, minT2 - (T1-t+1)* self.batch_max_segment_len + 1), math.min(maxT2+1, (t-1) * self.batch_max_segment_len + 1)

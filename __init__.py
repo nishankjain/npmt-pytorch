@@ -240,7 +240,7 @@ class NPMT_Decoder(FairseqDecoder):
         self.fc_out = Linear(decoder_out_embed_dim, target_token_count, dropout=decoder_lstm_out_dropout)
 
     def forward(self, prev_output_tokens, encoder_out_dict):
-        # print("Prev Output Tokens Size: ", prev_output_tokens[0])
+        # print("Prev Output Tokens Size: ", prev_output_tokens)
         encoder_out = encoder_out_dict['encoder_out']
 
         bsz, seqlen = prev_output_tokens.size()
