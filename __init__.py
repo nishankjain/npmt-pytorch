@@ -18,7 +18,7 @@ from fairseq.data import (
 )
 
 from .SoftReordering import SoftReordering
-# from .upload import *
+from .upload import *
 
 
 @register_model('npmt')
