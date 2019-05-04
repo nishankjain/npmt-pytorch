@@ -312,7 +312,7 @@ class NPMT_Decoder(FairseqDecoder):
         # Create the complete sequence by combining the produced words at each time step
         x = torch.cat(lstm_attn_outputs, dim=0).view(tgt_seq_len, bsz, self.decoder_lstm_hidden_size)
 
-        print("Post Attention Size: ", x.size())
+        # print("Post Attention Size: ", x.size())
 
         # T x B x C -> B x T x C
         x = x.transpose(1, 0)
