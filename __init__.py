@@ -1,35 +1,24 @@
-# Copyright (c) 2017-present, Facebook, Inc.
-# All rights reserved.
-#
-# This source code is licensed under the license found in the LICENSE file in
-# the root directory of this source tree. An additional grant of patent rights
-# can be found in the PATENTS file in the same directory.
-
-import os, itertools, sys
+import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from fairseq import options, utils
-from fairseq.modules import AdaptiveSoftmax
 from fairseq.models import (
-    FairseqEncoder, FairseqDecoder, FairseqModel, register_model,
-    register_model_architecture,
+    FairseqEncoder,
+    FairseqDecoder,
+    FairseqModel,
+    register_model,
+    register_model_architecture
 )
 
 from fairseq.tasks import FairseqTask, register_task
 from fairseq.data import (
-    ConcatDataset,
-    data_utils,
-    Dictionary,
-    IndexedCachedDataset,
     IndexedDataset,
-    IndexedRawTextDataset,
     LanguagePairDataset
 )
 
 from .SoftReordering import SoftReordering
-from .upload import *
+# from .upload import *
 
 
 @register_model('npmt')
@@ -70,9 +59,6 @@ class NPMT(FairseqModel):
 
     @classmethod
     def build_model(cls, args, task):
-        if args.encoder_layers != args.decoder_layers:
-            raise ValueError('--encoder-layers must match --decoder-layers')
-
         npmt_encoder = NPMT_Encoder(
             src_dictionary = task.source_dictionary,
             encoder_embed_dim = args.encoder_embed_dim,
@@ -99,8 +85,15 @@ class NPMT(FairseqModel):
 
 class NPMT_Encoder(FairseqEncoder):
     def __init__(
-        self, src_dictionary, encoder_embed_dim, encoder_lstm_hidden_size, encoder_lstm_num_layers, encoder_embed_dropout,
-        encoder_lstm_out_dropout, encoder_lstm_bidirectional, reordering_window_size
+        self,
+        src_dictionary,
+        encoder_embed_dim,
+        encoder_lstm_hidden_size,
+        encoder_lstm_num_layers,
+        encoder_embed_dropout,
+        encoder_lstm_out_dropout,
+        encoder_lstm_bidirectional,
+        reordering_window_size
     ):
         super().__init__(src_dictionary)
         self.encoder_lstm_num_layers = encoder_lstm_num_layers
@@ -116,7 +109,7 @@ class NPMT_Encoder(FairseqEncoder):
         self.src_padding_idx = src_dictionary.pad()
         self.embed_tokens = Embedding(source_token_count, encoder_embed_dim, self.src_padding_idx)
 
-        self.lstm = LSTM(
+        self.encoder_lstm = LSTM(
             input_size=encoder_embed_dim,
             hidden_size=encoder_lstm_hidden_size,
             num_layers=encoder_lstm_num_layers,
@@ -173,7 +166,7 @@ class NPMT_Encoder(FairseqEncoder):
             state_size = self.encoder_lstm_num_layers, bsz, self.encoder_lstm_hidden_size
         h0 = x.new_zeros(*state_size)
         c0 = x.new_zeros(*state_size)
-        packed_outputs, (final_hiddens, final_cells) = self.lstm(packed_inputs, (h0, c0))
+        packed_outputs, (final_hiddens, final_cells) = self.encoder_lstm(packed_inputs, (h0, c0))
 
         # Unpack LSTM outputs
         x, _ = nn.utils.rnn.pad_packed_sequence(packed_outputs, padding_value=0)
@@ -186,9 +179,6 @@ class NPMT_Encoder(FairseqEncoder):
             final_hiddens = reshape_bidirectional_lstm_hiddens(final_hiddens, self.encoder_lstm_num_layers, bsz)
             final_cells = reshape_bidirectional_lstm_hiddens(final_cells, self.encoder_lstm_num_layers, bsz)
 
-        # print("X Size: ", x.size())
-        # print("Final Hidden Size: ", final_hiddens.size())
-        # print("Final Cell Size: ", final_cells.size())
         return {
             'encoder_out': (x, final_hiddens, final_cells)
         }
@@ -205,10 +195,44 @@ class NPMT_Encoder(FairseqEncoder):
         return int(1e5)  # an arbitrary large number
 
 
+class NPMT_Attention(nn.Module):
+    def __init__(self, input_embed_dim, source_embed_dim, output_embed_dim):
+        super().__init__()
+
+        self.input_proj = Linear(input_embed_dim, source_embed_dim)
+        self.output_proj = Linear(input_embed_dim + source_embed_dim, output_embed_dim)
+
+    def forward(self, input, source_hids):
+        # input: bsz x input_embed_dim  (final_hiddens)
+        # source_hids: srclen x bsz x output_embed_dim  (encoder_outs)
+
+        # x: num_layers x bsz x output_embed_dim
+        x = self.input_proj(input)
+
+        # compute attention
+        attn_scores = (source_hids * x.unsqueeze(0)).sum(dim=2)
+
+        attn_scores = F.softmax(attn_scores, dim=0)  # srclen x bsz
+
+        # sum weighted sources
+        x = (attn_scores.unsqueeze(2) * source_hids).sum(dim=0)
+
+        x = F.tanh(self.output_proj(torch.cat((x, input), dim=1)))
+        # return x, attn_scores
+        return x
+
+
 class NPMT_Decoder(FairseqDecoder):
     def __init__(
-        self, tgt_dictionary, decoder_embed_dim, decoder_lstm_hidden_size, decoder_out_embed_dim,
-        decoder_lstm_num_layers, decoder_embed_dropout, decoder_lstm_out_dropout, encoder_output_units
+        self,
+        tgt_dictionary,
+        decoder_embed_dim,
+        decoder_lstm_hidden_size,
+        decoder_out_embed_dim,
+        decoder_lstm_num_layers,
+        decoder_embed_dropout,
+        decoder_lstm_out_dropout,
+        encoder_output_units
     ):
         super().__init__(tgt_dictionary)
         self.decoder_embed_dropout = decoder_embed_dropout
@@ -227,55 +251,71 @@ class NPMT_Decoder(FairseqDecoder):
             self.encoder_hidden_proj = Linear(encoder_output_units, decoder_lstm_hidden_size)
             self.encoder_cell_proj = Linear(encoder_output_units, decoder_lstm_hidden_size)
 
-        self.lstm = LSTM(
-            input_size=decoder_embed_dim,
-            hidden_size=decoder_lstm_hidden_size,
+        self.decoder_lstm = LSTM(
+            input_size=decoder_embed_dim + self.decoder_lstm_hidden_size,
+            hidden_size=self.decoder_lstm_hidden_size,
             num_layers=self.decoder_lstm_num_layers,
             dropout=0,
             bidirectional=False
         )
+
+        self.attention = NPMT_Attention(self.decoder_lstm_hidden_size, encoder_output_units, self.decoder_lstm_hidden_size)
         
         if decoder_lstm_hidden_size != decoder_out_embed_dim:
             self.additional_fc = Linear(decoder_lstm_hidden_size, decoder_out_embed_dim)
-        self.fc_out = Linear(decoder_out_embed_dim, target_token_count, dropout=decoder_lstm_out_dropout)
+        self.fc_out = Linear(decoder_out_embed_dim, target_token_count)
 
-    def forward(self, prev_output_tokens, encoder_out_dict):
-        # print("Prev Output Tokens Size: ", prev_output_tokens)
+    def forward(self, tgt_tokens, encoder_out_dict):
         encoder_out = encoder_out_dict['encoder_out']
 
-        bsz, seqlen = prev_output_tokens.size()
+        bsz, tgt_seq_len = tgt_tokens.size()
 
         # get outputs from encoder
         encoder_outs, encoder_hiddens, encoder_cells = encoder_out[:3]
-        prev_hiddens = encoder_hiddens
-        prev_cells = encoder_cells
-        # srclen = encoder_outs.size(0)
+        src_seq_len = encoder_outs.size(0)
+        prev_decoder_lstm_hiddens = encoder_hiddens
+        prev_decoder_lstm_cells = encoder_cells
 
         # embed tokens
-        x = self.embed_tokens(prev_output_tokens)
+        x = self.embed_tokens(tgt_tokens)
         x = F.dropout(x, p=self.decoder_embed_dropout, training=self.training)
 
-        # Transpose input from bsz x seqlen x embed_dim to seqlen x bsz x embed_dim
+        # Transpose input from bsz x tgt_seq_len x embed_dim to tgt_seq_len x bsz x embed_dim
         # for packing and unpacking the input through LSTM layers
         x = x.transpose(0, 1)
 
-        # initialize previous states
-        # prev_hiddens = [encoder_hiddens[i] for i in range(self.decoder_lstm_num_layers)]
-        # prev_cells = [encoder_cells[i] for i in range(self.decoder_lstm_num_layers)]
         if self.encoder_hidden_proj is not None:
-            prev_hiddens = [self.encoder_hidden_proj(x) for x in encoder_hiddens]
-            prev_cells = [self.encoder_cell_proj(x) for x in encoder_cells]
+            prev_decoder_lstm_hiddens = [self.encoder_hidden_proj(x) for x in encoder_hiddens]
+            prev_decoder_lstm_cells = [self.encoder_cell_proj(x) for x in encoder_cells]
 
         # Apply LSTM layers to the input
-        x, (final_hiddens, final_cells) = self.lstm(x, (prev_hiddens, prev_cells))
+        last_lstm_attn_output = x.new_zeros(bsz, self.decoder_lstm_hidden_size)
+        lstm_attn_outputs = []
+        for tgt_word_index in range(tgt_seq_len):
+            # Teacher Forcing
+            # print(x.size())
+            decoder_lstm_input = torch.cat((x[tgt_word_index, :, :], last_lstm_attn_output), dim=1).unsqueeze(0)
+            # print(decoder_lstm_input.size())
+
+            # Pass word at tgt_word_index in all sequences through LSTM and get the corresponding output word
+            decoder_lstm_output, (prev_decoder_lstm_hiddens, prev_decoder_lstm_cells) = self.decoder_lstm(decoder_lstm_input, (prev_decoder_lstm_hiddens, prev_decoder_lstm_cells))
+            
+            # Apply attention to the word (for all sequences in the batch)
+            decoder_lstm_attn_out = self.attention(prev_decoder_lstm_hiddens[-1], encoder_outs)
+
+            # Apply output dropout
+            last_lstm_attn_output = F.dropout(decoder_lstm_attn_out, p=self.decoder_lstm_out_dropout, training=self.training)
+
+            # Append to the outputs array to create the whole sentence after the loop ends
+            lstm_attn_outputs.append(last_lstm_attn_output)
         
-        # Apply output dropout
-        x = F.dropout(x, p=self.decoder_lstm_out_dropout, training=self.training)
+        # Create the complete sequence by combining the produced words at each time step
+        x = torch.cat(lstm_attn_outputs, dim=0).view(tgt_seq_len, bsz, self.decoder_lstm_hidden_size)
+
+        print("Post Attention Size: ", x.size())
 
         # T x B x C -> B x T x C
         x = x.transpose(1, 0)
-
-        attn_scores = None
 
         # project back to size of vocabulary
         if hasattr(self, 'additional_fc'):
@@ -283,8 +323,7 @@ class NPMT_Decoder(FairseqDecoder):
             # x = F.dropout(x, p=self.decoder_lstm_out_dropout, training=self.training)
         x = self.fc_out(x)
         
-        # return x
-        return x, attn_scores
+        return x, None
 
     def max_positions(self):
         """Maximum output length supported by the decoder."""
@@ -314,12 +353,10 @@ def LSTMCell(input_size, hidden_size, **kwargs):
     return m
 
 
-def Linear(in_features, out_features, bias=True, dropout=0):
-    """Linear layer (input: N x T x C)"""
-    m = nn.Linear(in_features, out_features, bias=bias)
+def Linear(in_features, out_features):
+    m = nn.Linear(in_features, out_features)
     m.weight.data.uniform_(-0.1, 0.1)
-    if bias:
-        m.bias.data.uniform_(-0.1, 0.1)
+    m.bias.data.uniform_(-0.1, 0.1)
     return m
 
 
