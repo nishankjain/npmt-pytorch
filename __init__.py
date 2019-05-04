@@ -29,7 +29,7 @@ from fairseq.data import (
 )
 
 from .SoftReordering import SoftReordering
-from .upload import *
+# from .upload import *
 
 
 @register_model('npmt')
@@ -128,7 +128,7 @@ class NPMT_Encoder(FairseqEncoder):
         if encoder_lstm_bidirectional:
             self.output_units *= 2
         
-        self.reordering = SoftReordering(encoder_embed_dim, self.reordering_window_size)
+        # self.reordering = SoftReordering(encoder_embed_dim, self.reordering_window_size)
 
     def forward(self, src_tokens, src_lengths):
         # Code for saving the checkpoints from Colab to Google Drive
@@ -157,7 +157,7 @@ class NPMT_Encoder(FairseqEncoder):
         x = F.dropout(x, p=self.encoder_embed_dropout, training=self.training)
         
         # Apply Soft Reordering
-        x = self.reordering(x)
+        # x = self.reordering(x)
 
         # Transpose input from bsz x seqlen x embed_dim to seqlen x bsz x embed_dim
         # for packing and unpacking the input through LSTM layers
@@ -226,14 +226,14 @@ class NPMT_Decoder(FairseqDecoder):
         if encoder_output_units != decoder_lstm_hidden_size:
             self.encoder_hidden_proj = Linear(encoder_output_units, decoder_lstm_hidden_size)
             self.encoder_cell_proj = Linear(encoder_output_units, decoder_lstm_hidden_size)
-        
-        self.layers = nn.ModuleList([
-            LSTMCell(
-                input_size=decoder_lstm_hidden_size + decoder_embed_dim if layer == 0 else decoder_lstm_hidden_size,
-                hidden_size=decoder_lstm_hidden_size,
-            )
-            for layer in range(self.decoder_lstm_num_layers)
-        ])
+
+        self.lstm = LSTM(
+            input_size=decoder_embed_dim,
+            hidden_size=decoder_lstm_hidden_size,
+            num_layers=self.decoder_lstm_num_layers,
+            dropout=0,
+            bidirectional=False
+        )
         
         if decoder_lstm_hidden_size != decoder_out_embed_dim:
             self.additional_fc = Linear(decoder_lstm_hidden_size, decoder_out_embed_dim)
@@ -247,50 +247,30 @@ class NPMT_Decoder(FairseqDecoder):
 
         # get outputs from encoder
         encoder_outs, encoder_hiddens, encoder_cells = encoder_out[:3]
-        srclen = encoder_outs.size(0)
+        prev_hiddens = encoder_hiddens
+        prev_cells = encoder_cells
+        # srclen = encoder_outs.size(0)
 
         # embed tokens
         x = self.embed_tokens(prev_output_tokens)
         x = F.dropout(x, p=self.decoder_embed_dropout, training=self.training)
 
-        # B x T x C -> T x B x C
+        # Transpose input from bsz x seqlen x embed_dim to seqlen x bsz x embed_dim
+        # for packing and unpacking the input through LSTM layers
         x = x.transpose(0, 1)
 
         # initialize previous states
-        prev_hiddens = [encoder_hiddens[i] for i in range(self.decoder_lstm_num_layers)]
-        prev_cells = [encoder_cells[i] for i in range(self.decoder_lstm_num_layers)]
+        # prev_hiddens = [encoder_hiddens[i] for i in range(self.decoder_lstm_num_layers)]
+        # prev_cells = [encoder_cells[i] for i in range(self.decoder_lstm_num_layers)]
         if self.encoder_hidden_proj is not None:
-            prev_hiddens = [self.encoder_hidden_proj(x) for x in prev_hiddens]
-            prev_cells = [self.encoder_cell_proj(x) for x in prev_cells]
-        input_feed = x.new_zeros(bsz, self.decoder_lstm_hidden_size)
+            prev_hiddens = [self.encoder_hidden_proj(x) for x in encoder_hiddens]
+            prev_cells = [self.encoder_cell_proj(x) for x in encoder_cells]
 
-        outs = []
-        for j in range(seqlen):
-            # input feeding: concatenate context vector from previous time step
-            input = torch.cat((x[j, :, :], input_feed), dim=1)
-
-            for i, rnn in enumerate(self.layers):
-                # recurrent cell
-                hidden, cell = rnn(input, (prev_hiddens[i], prev_cells[i]))
-
-                # hidden state becomes the input to the next layer
-                input = F.dropout(hidden, p=self.decoder_lstm_out_dropout, training=self.training)
-
-                # save state for next time step
-                prev_hiddens[i] = hidden
-                prev_cells[i] = cell
-
-            out = hidden
-            out = F.dropout(out, p=self.decoder_lstm_out_dropout, training=self.training)
-
-            # input feeding
-            input_feed = out
-
-            # save final output
-            outs.append(out)
-
-        # collect outputs across time steps
-        x = torch.cat(outs, dim=0).view(seqlen, bsz, self.decoder_lstm_hidden_size)
+        # Apply LSTM layers to the input
+        x, (final_hiddens, final_cells) = self.lstm(x, (prev_hiddens, prev_cells))
+        
+        # Apply output dropout
+        x = F.dropout(x, p=self.decoder_lstm_out_dropout, training=self.training)
 
         # T x B x C -> B x T x C
         x = x.transpose(1, 0)
@@ -300,7 +280,7 @@ class NPMT_Decoder(FairseqDecoder):
         # project back to size of vocabulary
         if hasattr(self, 'additional_fc'):
             x = self.additional_fc(x)
-            x = F.dropout(x, p=self.decoder_lstm_out_dropout, training=self.training)
+            # x = F.dropout(x, p=self.decoder_lstm_out_dropout, training=self.training)
         x = self.fc_out(x)
         
         # return x

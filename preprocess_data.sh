@@ -30,12 +30,12 @@ fi
 src=de
 tgt=en
 lang=de-en
-prep=iwslt16.tokenized.de-en_tokenized
-final=iwslt16.tokenized.de-en
+# prep=iwslt16.tokenized.de-en_tokenized
+prep=iwslt16.tokenized.de-en
 tmp=$prep/tmp
 orig=orig
 
-mkdir -p $tmp $prep $final
+mkdir -p $tmp $prep
 
 cd $orig
 
@@ -96,23 +96,6 @@ for l in $src; do
 done
 
 
-# perl $CLEAN -ratio 1.5 $tmp/test.tok $src $tgt $tmp/test.clean 1 50
-# for l in $src $tgt; do
-#     perl $LOWERCASE < $tmp/test.clean.$l > $tmp/test.$l
-# done
-
-# for l in $src $tgt; do
-#     perl $LOWERCASE < $tmp/test.clean.$l > $prep/test.$l
-# done
-
-
-# NR = Number of records in the input file
-# echo "creating train, valid data..."
-# for l in $src $tgt; do
-#     awk '{if (NR%23 == 0)  print $0; }' $tmp/train_temp.$l > $tmp/valid.$l
-#     awk '{if (NR%23 != 0)  print $0; }' $tmp/train_temp.$l > $tmp/train.$l
-# done
-
 echo "creating train, valid data..."
 for l in $src $tgt; do
     awk '{if (NR%23 == 0)  print $0; }' $tmp/train_temp.$l > $prep/valid.$l
@@ -121,28 +104,28 @@ done
 echo ""
 
 
-TRAIN=$tmp/train.en-de
-BPE_CODE=$prep/code
-rm -f $TRAIN
-for l in $src $tgt; do
-    cat $prep/train.$l >> $TRAIN
-done
+# TRAIN=$tmp/train.en-de
+# BPE_CODE=$prep/code
+# rm -f $TRAIN
+# for l in $src $tgt; do
+#     cat $prep/train.$l >> $TRAIN
+# done
 
 
-echo "learn_bpe.py on ${TRAIN}..."
-python $BPEROOT/learn_bpe.py -s $BPE_TOKENS < $TRAIN > $BPE_CODE
+# echo "learn_bpe.py on ${TRAIN}..."
+# python $BPEROOT/learn_bpe.py -s $BPE_TOKENS < $TRAIN > $BPE_CODE
 
-for L in $src $tgt; do
-    for f in train.$L valid.$L dev.$L; do
-        echo "apply_bpe.py to ${f}..."
-        python $BPEROOT/apply_bpe.py -c $BPE_CODE < $prep/$f > $final/$f
-    done
-done
+# for L in $src $tgt; do
+#     for f in train.$L valid.$L dev.$L; do
+#         echo "apply_bpe.py to ${f}..."
+#         python $BPEROOT/apply_bpe.py -c $BPE_CODE < $prep/$f > $final/$f
+#     done
+# done
 
 
-for L in $src; do
-    for f in test.$L; do
-        echo "apply_bpe.py to ${f}..."
-        python $BPEROOT/apply_bpe.py -c $BPE_CODE < $prep/$f > $final/$f
-    done
-done
+# for L in $src; do
+#     for f in test.$L; do
+#         echo "apply_bpe.py to ${f}..."
+#         python $BPEROOT/apply_bpe.py -c $BPE_CODE < $prep/$f > $final/$f
+#     done
+# done
