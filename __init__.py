@@ -27,8 +27,8 @@ from fairseq.data import (
     IndexedRawTextDataset,
     LanguagePairDataset
 )
-
-from .SoftReordering import SoftReordering
+from .upload import *
+# from .SoftReordering import SoftReordering
 
 
 @register_model('npmt')
@@ -213,6 +213,8 @@ class LSTMEncoder(FairseqEncoder):
             dropout=self.dropout_out if num_layers > 1 else 0.,
             bidirectional=bidirectional
         )
+        self.best_stamp = 0
+        self.last_stamp = 0
         self.left_pad = left_pad
         self.padding_value = padding_value
 
@@ -223,6 +225,22 @@ class LSTMEncoder(FairseqEncoder):
         # self.reordering = SoftReordering(embed_dim, self.window_size, self.padding_idx)
 
     def forward(self, src_tokens, src_lengths):
+        # Code for saving the checkpoints from Colab to Google Drive
+        if self.training:
+            filename_best = './checkpoints/checkpoint_best.pt'
+            filename_last = './checkpoints/checkpoint_last.pt'
+            if os.path.isfile(filename_best):
+                best_stamp = os.stat(filename_best).st_mtime
+                if best_stamp != self.best_stamp:
+                    self.best_stamp = best_stamp
+                    print("Best Stamp: ", self.best_stamp)
+                    upload_best()
+            if os.path.isfile(filename_last):
+                last_stamp = os.stat(filename_last).st_mtime
+                if last_stamp != self.last_stamp:
+                    self.last_stamp = last_stamp
+                    print("Last Stamp: ", self.best_stamp)
+                    upload_last()
         if self.left_pad:
             # convert left-padding to right-padding
             src_tokens = utils.convert_padding_direction(

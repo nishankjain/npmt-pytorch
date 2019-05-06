@@ -19,7 +19,8 @@ CLEAN=$SCRIPTS/training/clean-corpus-n.perl
 BPEROOT=subword-nmt
 BPE_TOKENS=10000
 
-ZIP=iwslt16_en_de.zip
+ZIP_TRAIN_VAL=iwslt16_en_de.zip
+ZIP_TEST=iwslt16_en_de_test.zip
 
 if [ ! -d "$SCRIPTS" ]; then
     echo "Please set SCRIPTS variable correctly to point to Moses scripts."
@@ -29,6 +30,7 @@ fi
 src=de
 tgt=en
 lang=de-en
+# prep=iwslt16.tokenized.de-en_tokenized
 prep=iwslt16.tokenized.de-en
 tmp=$prep/tmp
 orig=orig
@@ -37,16 +39,26 @@ mkdir -p $tmp $prep
 
 cd $orig
 
-if [ -f $ZIP ]; then
-    echo "Data present."
+if [ -f $ZIP_TRAIN_VAL ]; then
+    echo "Train and Val data present."
 else
-    echo "Data not present."
+    echo "Train and Val data not present."
     exit
 fi
 
+
+if [ -f $ZIP_TEST ]; then
+    echo "Test data present."
+else
+    echo "Test data not present."
+    exit
+fi
+
+
 echo "Unzipping data..."
 
-unzip $ZIP -d $lang
+unzip $ZIP_TRAIN_VAL -d $lang
+unzip $ZIP_TEST -d $lang
 cd ..
 
 
@@ -59,46 +71,61 @@ for l in $src $tgt; do
     perl $TOKENIZER -threads 8 -l $l > $tmp/$tok
     echo ""
 done
-perl $CLEAN -ratio 1.5 $tmp/train.tok $src $tgt $tmp/train.clean 1 175
-for l in $src $tgt; do
-    perl $LOWERCASE < $tmp/train.clean.$l > $tmp/train_temp.$l
-done
+perl $CLEAN -ratio 1.5 $tmp/train.tok $src $tgt $tmp/train_temp 1 50
 
 
-echo "pre-processing test data..."
+echo "pre-processing dev data..."
 for l in $src $tgt; do
     f=dev.$l
-    tok=test.tok.$l
+    # tok=valid.tok.$l
 
     cat $orig/$lang/$f | \
-    perl $TOKENIZER -threads 8 -l $l > $tmp/$tok
-    perl $LOWERCASE < $tmp/$tok > $tmp/test.$l
+    perl $TOKENIZER -threads 8 -l $l > $prep/$f
     echo ""
 done
 
 
-# NR = Number of records in the input file
+echo "pre-processing test data..."
+for l in $src; do
+    f=test.$l
+    # tok=test.tok.$l
+
+    cat $orig/$lang/$f | \
+    perl $TOKENIZER -threads 8 -l $l > $prep/$f
+    echo ""
+done
+
+
 echo "creating train, valid data..."
 for l in $src $tgt; do
-    awk '{if (NR%23 == 0)  print $0; }' $tmp/train_temp.$l > $tmp/valid.$l
-    awk '{if (NR%23 != 0)  print $0; }' $tmp/train_temp.$l > $tmp/train.$l
+    awk '{if (NR%23 == 0)  print $0; }' $tmp/train_temp.$l > $prep/valid.$l
+    awk '{if (NR%23 != 0)  print $0; }' $tmp/train_temp.$l > $prep/train.$l
 done
+echo ""
 
 
-TRAIN=$tmp/train.en-de
-BPE_CODE=$prep/code
-rm -f $TRAIN
-for l in $src $tgt; do
-    cat $tmp/train.$l >> $TRAIN
-done
+# TRAIN=$tmp/train.en-de
+# BPE_CODE=$prep/code
+# rm -f $TRAIN
+# for l in $src $tgt; do
+#     cat $prep/train.$l >> $TRAIN
+# done
 
 
-echo "learn_bpe.py on ${TRAIN}..."
-python $BPEROOT/learn_bpe.py -s $BPE_TOKENS < $TRAIN > $BPE_CODE
+# echo "learn_bpe.py on ${TRAIN}..."
+# python $BPEROOT/learn_bpe.py -s $BPE_TOKENS < $TRAIN > $BPE_CODE
 
-for L in $src $tgt; do
-    for f in train.$L valid.$L test.$L; do
-        echo "apply_bpe.py to ${f}..."
-        python $BPEROOT/apply_bpe.py -c $BPE_CODE < $tmp/$f > $prep/$f
-    done
-done
+# for L in $src $tgt; do
+#     for f in train.$L valid.$L dev.$L; do
+#         echo "apply_bpe.py to ${f}..."
+#         python $BPEROOT/apply_bpe.py -c $BPE_CODE < $prep/$f > $final/$f
+#     done
+# done
+
+
+# for L in $src; do
+#     for f in test.$L; do
+#         echo "apply_bpe.py to ${f}..."
+#         python $BPEROOT/apply_bpe.py -c $BPE_CODE < $prep/$f > $final/$f
+#     done
+# done
