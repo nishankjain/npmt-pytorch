@@ -3,9 +3,9 @@ from pydrive.auth import GoogleAuth
 from pydrive.drive import GoogleDrive
 from google.colab import auth
 from oauth2client.client import GoogleCredentials
-from checkpoint_ids import folder_id
-from checkpoint_ids import best_id
-from checkpoint_ids import last_id
+from .checkpoint_ids import folder_id
+from .checkpoint_ids import best_id
+from .checkpoint_ids import last_id
 
 # Authenticate and create the PyDrive client.
 # This only needs to be done once in a notebook.
