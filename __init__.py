@@ -1,10 +1,3 @@
-# Copyright (c) 2017-present, Facebook, Inc.
-# All rights reserved.
-#
-# This source code is licensed under the license found in the LICENSE file in
-# the root directory of this source tree. An additional grant of patent rights
-# can be found in the PATENTS file in the same directory.
-
 import os, itertools, sys
 import torch
 import torch.nn as nn
@@ -28,7 +21,7 @@ from fairseq.data import (
     LanguagePairDataset
 )
 from .upload import *
-# from .SoftReordering import SoftReordering
+from .SoftReordering import SoftReordering
 
 
 @register_model('npmt')
@@ -162,7 +155,7 @@ class LSTMModel(FairseqModel):
             dropout_out=args.encoder_dropout_out,
             bidirectional=args.encoder_bidirectional,
             pretrained_embed=pretrained_encoder_embed,
-            window_size=args.window_size
+            reordering_window_size=args.reordering_window_size
         )
         decoder = LSTMDecoder(
             dictionary=task.target_dictionary,
@@ -186,10 +179,11 @@ class LSTMModel(FairseqModel):
 
 class LSTMEncoder(FairseqEncoder):
     """LSTM encoder."""
+
     def __init__(
-        self, dictionary, embed_dim=512, hidden_size=512, num_layers=1,
-        dropout_in=0.1, dropout_out=0.1, bidirectional=False,
-        left_pad=True, pretrained_embed=None, padding_value=0., window_size=7
+            self, dictionary, embed_dim=512, hidden_size=512, num_layers=1,
+            dropout_in=0.1, dropout_out=0.1, bidirectional=False,
+            left_pad=True, pretrained_embed=None, padding_value=0., reordering_window_size=7
     ):
         super().__init__(dictionary)
         self.num_layers = num_layers
@@ -197,7 +191,7 @@ class LSTMEncoder(FairseqEncoder):
         self.dropout_out = dropout_out
         self.bidirectional = bidirectional
         self.hidden_size = hidden_size
-        self.window_size = window_size
+        self.reordering_window_size = reordering_window_size
 
         num_embeddings = len(dictionary)
         self.padding_idx = dictionary.pad()
@@ -221,8 +215,8 @@ class LSTMEncoder(FairseqEncoder):
         self.output_units = hidden_size
         if bidirectional:
             self.output_units *= 2
-        
-        # self.reordering = SoftReordering(embed_dim, self.window_size, self.padding_idx)
+
+        self.reordering = SoftReordering(embed_dim, self.reordering_window_size)
 
     def forward(self, src_tokens, src_lengths):
         # Code for saving the checkpoints from Colab to Google Drive
@@ -254,7 +248,7 @@ class LSTMEncoder(FairseqEncoder):
         # embed tokens
         x = self.embed_tokens(src_tokens)
         x = F.dropout(x, p=self.dropout_in, training=self.training)
-        # x = self.reordering(x)
+        x = self.reordering(x)
 
         # B x T x C -> T x B x C
         x = x.transpose(0, 1)
@@ -278,7 +272,6 @@ class LSTMEncoder(FairseqEncoder):
         assert list(x.size()) == expected_sizes
 
         if self.bidirectional:
-
             def combine_bidir(outs):
                 out = outs.view(self.num_layers, 2, bsz, -1).transpose(1, 2).contiguous()
                 return out.view(self.num_layers, bsz, -1)
@@ -343,11 +336,12 @@ class AttentionLayer(nn.Module):
 
 class LSTMDecoder(FairseqIncrementalDecoder):
     """LSTM decoder."""
+
     def __init__(
-        self, dictionary, embed_dim=512, hidden_size=512, out_embed_dim=512,
-        num_layers=1, dropout_in=0.1, dropout_out=0.1, attention=True,
-        encoder_output_units=512, pretrained_embed=None,
-        share_input_output_embed=False, adaptive_softmax_cutoff=None,
+            self, dictionary, embed_dim=512, hidden_size=512, out_embed_dim=512,
+            num_layers=1, dropout_in=0.1, dropout_out=0.1, attention=True,
+            encoder_output_units=512, pretrained_embed=None,
+            share_input_output_embed=False, adaptive_softmax_cutoff=None,
     ):
         super().__init__(dictionary)
         self.dropout_in = dropout_in
@@ -370,7 +364,7 @@ class LSTMDecoder(FairseqIncrementalDecoder):
             self.encoder_cell_proj = Linear(encoder_output_units, hidden_size)
         else:
             self.encoder_hidden_proj = self.encoder_cell_proj = None
-        
+
         self.layers = nn.ModuleList([
             LSTMCell(
                 input_size=hidden_size + embed_dim if layer == 0 else hidden_size,
@@ -572,7 +566,7 @@ def lstm_wiseman_iwslt_de_en(args):
     args.decoder_out_embed_dim = getattr(args, 'decoder_out_embed_dim', 512)
     args.decoder_dropout_in = getattr(args, 'decoder_dropout_in', 0)
     args.decoder_dropout_out = getattr(args, 'decoder_dropout_out', args.dropout)
-    args.window_size = getattr(args, 'window_size', 7)
+    args.reordering_window_size = getattr(args, 'reordering_window_size', 7)
     base_architecture(args)
 
 
@@ -630,7 +624,7 @@ class LoadDataset(FairseqTask):
         print('| [{}] dictionary: {} types'.format(args.source_lang, len(src_dict)))
         print('| [{}] dictionary: {} types'.format(args.target_lang, len(tgt_dict)))
         return cls(args, src_dict, tgt_dict)
-    
+
     def load_dataset(self, split, combine=False, **kwargs):
         # Load a given dataset
         def split_exists(split, src, tgt, lang, data_path):
@@ -650,7 +644,7 @@ class LoadDataset(FairseqTask):
                 else:
                     return IndexedCachedDataset(path, fix_lua_indexing=True)
             return None
-        
+
         src_datasets = []
         tgt_datasets = []
         data_paths = self.args.data
@@ -663,10 +657,10 @@ class LoadDataset(FairseqTask):
                 src, tgt = self.args.source_lang, self.args.target_lang
                 if split_exists(split_k, src, tgt, src, data_path):
                     prefix = os.path.join(data_path, '{}.{}-{}.'.format(split_k, src, tgt))
-                    print("prefix",prefix)
+                    print("prefix", prefix)
                 elif split_exists(split_k, tgt, src, src, data_path):
                     prefix = os.path.join(data_path, '{}.{}-{}.'.format(split_k, tgt, src))
-                    print("prefix2",prefix)
+                    print("prefix2", prefix)
                 else:
                     if k > 0 or dk > 0:
                         break
@@ -698,7 +692,7 @@ class LoadDataset(FairseqTask):
             max_source_positions=self.args.max_source_positions,
             max_target_positions=self.args.max_target_positions,
         )
-    
+
     @property
     def source_dictionary(self):
         """Return the source :class:`~fairseq.data.Dictionary`."""
